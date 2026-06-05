@@ -1,0 +1,5 @@
+data.json
+server.out.log
+server.err.log
+startup.log
+node_modules/

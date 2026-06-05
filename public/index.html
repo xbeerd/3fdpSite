@@ -1,0 +1,180 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="theme-color" content="#121212">
+    <title>3FDP Team Site</title>
+    <link rel="icon" type="image/png" href="/icon.png">
+    <link rel="apple-touch-icon" href="/icon.png">
+    <link rel="manifest" href="/manifest.json">
+    <link rel="stylesheet" href="/styles.css">
+  </head>
+  <body>
+    <header class="app-header">
+      <button id="menuBtn" class="icon-button" type="button" aria-label="Open menu">Menu</button>
+      <div>
+        <p class="eyebrow">3 Finger Death Punch</p>
+        <h1>Team Site</h1>
+      </div>
+      <button id="logoutBtn" class="ghost hidden" type="button">Log out</button>
+    </header>
+
+    <nav id="menu" class="menu hidden">
+      <button data-view="home" type="button">Blog</button>
+      <button data-view="calendar" type="button">Calendar</button>
+      <button data-view="loser" type="button">Biggest Loser</button>
+      <button data-view="admin" type="button" class="admin-only hidden">Admin</button>
+      <button data-view="login" type="button">Login</button>
+    </nav>
+
+    <main>
+      <section id="loginView" class="view panel auth-panel">
+        <p class="eyebrow">Login</p>
+        <h2>Welcome back</h2>
+        <form id="loginForm" class="form">
+          <label>Email or username <input name="email" type="text" autocomplete="username" required></label>
+          <label>Password <input name="password" type="password" autocomplete="current-password"></label>
+          <button type="submit">Log in</button>
+        </form>
+        <form id="registerForm" class="form">
+          <p class="eyebrow">New teammate</p>
+          <label>Email <input name="email" type="email" required></label>
+          <label>Username <input name="username" type="text" required></label>
+          <label>Password <input name="password" type="password" minlength="8" required></label>
+          <label>Admin setup code <input name="setupCode" type="text" placeholder="Only needed for first admin setup"></label>
+          <button type="submit">Create account</button>
+        </form>
+      </section>
+
+      <section id="passwordSetupView" class="view panel hidden">
+        <p class="eyebrow">Account Setup</p>
+        <h2>Set your password</h2>
+        <form id="passwordSetupForm" class="form">
+          <label>Email <input name="email" type="email" placeholder="you@example.com"></label>
+          <label>New password <input name="password" type="password" minlength="8" required></label>
+          <button type="submit">Save password</button>
+        </form>
+      </section>
+
+      <section id="homeView" class="view hidden">
+        <section class="panel">
+          <p class="eyebrow">Team Notes</p>
+          <h2>Latest updates</h2>
+          <form id="noteForm" class="form">
+            <label>Add a note <textarea name="text" rows="3" placeholder="Practice updates, sub notes, bowling chatter..."></textarea></label>
+            <button type="submit">Post note</button>
+          </form>
+          <div id="subSummary" class="summary-list"></div>
+          <div id="notesList" class="feed"></div>
+        </section>
+      </section>
+
+      <section id="calendarView" class="view hidden">
+        <section class="panel">
+          <div class="section-heading">
+            <div>
+              <p class="eyebrow">Calendar</p>
+              <h2>Bowling schedule & subs</h2>
+            </div>
+            <button id="downloadAllIcs" type="button" class="ghost">Download season</button>
+          </div>
+          <div id="calendarList" class="card-list"></div>
+        </section>
+      </section>
+
+      <section id="loserView" class="view hidden">
+        <section class="status-grid">
+          <div class="panel">
+            <p class="eyebrow">Contest</p>
+            <h2 id="contestWindow">Not configured</h2>
+            <p id="contestStatus" class="muted"></p>
+          </div>
+          <div class="panel">
+            <p class="eyebrow">Your Progress</p>
+            <h2 id="myProgress">No entries yet</h2>
+            <p class="muted">Your exact weights stay on your page.</p>
+          </div>
+        </section>
+        <section class="panel">
+          <p class="eyebrow">Your Weight Log</p>
+          <h2>Add weight entry</h2>
+          <form id="weightForm" class="form inline-form">
+            <label>Date <input name="date" type="date"></label>
+            <label>Weight <input name="weight" type="number" min="1" max="1499" step="0.1" required></label>
+            <button type="submit">Save weight</button>
+          </form>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Date</th><th>Weight</th><th>Logged</th></tr></thead>
+              <tbody id="myWeights"></tbody>
+            </table>
+          </div>
+        </section>
+        <section class="panel">
+          <div class="section-heading">
+            <div>
+              <p class="eyebrow">Main Board</p>
+              <h2>Percentage weight loss</h2>
+            </div>
+            <form id="rangeForm" class="range-controls">
+              <label>From <select name="fromWeek"></select></label>
+              <label>To <select name="toWeek"></select></label>
+            </form>
+          </div>
+          <div id="chart" class="chart"></div>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Rank</th><th>User</th><th>% Lost</th><th>Through</th></tr></thead>
+              <tbody id="leaderboard"></tbody>
+            </table>
+          </div>
+        </section>
+      </section>
+
+      <section id="adminView" class="view hidden">
+        <section class="panel">
+          <p class="eyebrow">Admin</p>
+          <h2>Site setup</h2>
+          <form id="configForm" class="form inline-form">
+            <label>Bowling start <input name="bowlingStartTime" type="time"></label>
+            <label>Practice start <input name="practiceStartTime" type="time"></label>
+            <label>Contest start <input name="contestStartDate" type="date"></label>
+            <label>Contest end <input name="contestEndDate" type="date"></label>
+            <button type="submit">Save setup</button>
+          </form>
+        </section>
+
+        <section class="panel">
+          <p class="eyebrow">Schedule Upload</p>
+          <h2>CSV schedule import</h2>
+          <p class="hint">CSV headers: date,lane,opponent,startTime,practiceTime</p>
+          <form id="csvForm" class="form">
+            <label>Schedule CSV <input name="csv" type="file" accept=".csv,text/csv"></label>
+            <button type="submit">Upload schedule</button>
+          </form>
+        </section>
+
+        <section class="panel">
+          <p class="eyebrow">Accounts</p>
+          <h2>Create user</h2>
+          <form id="adminCreateUserForm" class="form inline-form">
+            <label>Email <input name="email" type="email" required></label>
+            <label>Username <input name="username" type="text" required></label>
+            <label>Temp password <input name="password" type="text" value="changeme123" minlength="8" required></label>
+            <button type="submit">Create user</button>
+          </form>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>User</th><th>Email</th><th>Role</th><th>Entries</th><th>Actions</th></tr></thead>
+              <tbody id="adminUsers"></tbody>
+            </table>
+          </div>
+        </section>
+      </section>
+    </main>
+
+    <div id="toast" class="toast hidden"></div>
+    <script src="/app.js"></script>
+  </body>
+</html>

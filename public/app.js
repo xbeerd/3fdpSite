@@ -11,6 +11,7 @@ const state = {
   adminUsers: [],
   adminSetupOpen: false,
   calendarCursor: new Date().toISOString().slice(0, 7),
+  selectedCalendarEventId: null,
   view: "home"
 };
 
@@ -98,6 +99,25 @@ function moveCalendarMonth(delta) {
   const next = new Date(year, month - 1 + delta, 1);
   state.calendarCursor = `${next.getFullYear()}-${String(next.getMonth() + 1).padStart(2, "0")}`;
   renderCalendar();
+}
+
+function selectedCalendarEvent() {
+  return state.events.find((eventItem) => eventItem.id === state.selectedCalendarEventId) || null;
+}
+
+function ensureSelectedCalendarEvent() {
+  if (selectedCalendarEvent()) return;
+  const today = todayYmd();
+  const eventsInMonth = state.events
+    .filter((eventItem) => String(eventItem.date || "").startsWith(state.calendarCursor))
+    .sort((a, b) => String(a.date).localeCompare(String(b.date)));
+  state.selectedCalendarEventId = (
+    eventsInMonth.find((eventItem) => eventItem.date >= today) ||
+    eventsInMonth[0] ||
+    [...state.events].sort((a, b) => String(a.date).localeCompare(String(b.date))).find((eventItem) => eventItem.date >= today) ||
+    state.events[0] ||
+    null
+  )?.id || null;
 }
 
 async function refreshBootstrap() {
@@ -194,6 +214,7 @@ function renderNote(note) {
 }
 
 function renderCalendar() {
+  ensureSelectedCalendarEvent();
   renderCalendarGrid();
   const quickForm = $("#quickEventForm");
   if (quickForm && !quickForm.elements.date.value) {
@@ -202,29 +223,33 @@ function renderCalendar() {
     quickForm.elements.practiceTime.value = state.config.practiceStartTime || "";
   }
 
-  $("#calendarList").innerHTML = state.events.length
-    ? state.events.map((eventItem) => {
-      const request = state.subRequests.find((item) => item.eventId === eventItem.id);
-      const adminControls = state.user?.role === "admin"
-        ? `<button class="small danger" type="button" data-delete-event="${eventItem.id}">Remove event</button>`
-        : "";
-      return `
-        <article id="event-${eventItem.id}" class="event-card">
-          <div>
-            <p class="eyebrow">${escapeHtml(eventItem.date)} - practice ${escapeHtml(eventItem.practiceTime || "")}</p>
-            <h3>${escapeHtml(eventItem.title || "Bowling")}</h3>
-            <p>Start ${escapeHtml(eventItem.startTime || "")} - Lane ${escapeHtml(eventItem.lane || "TBD")} - ${escapeHtml(eventItem.opponent || "Opponent TBD")}</p>
-          </div>
-          <div class="row-actions">
-            <button class="small ghost" type="button" data-ics="${eventItem.id}">Calendar event</button>
-            <button class="small" type="button" data-sub-request="${eventItem.id}">Need a sub</button>
-            ${adminControls}
-          </div>
-          ${request ? renderSubRequest(request) : ""}
-        </article>
-      `;
-    }).join("")
-    : `<p class="empty">No schedule loaded yet.</p>`;
+  $("#calendarList").innerHTML = renderSelectedCalendarEvent();
+}
+
+function renderSelectedCalendarEvent() {
+  const eventItem = selectedCalendarEvent();
+  if (!state.events.length) return `<p class="empty">No schedule loaded yet.</p>`;
+  if (!eventItem) return `<p class="empty">Select an event on the calendar to view details.</p>`;
+  const request = state.subRequests.find((item) => item.eventId === eventItem.id);
+  const adminControls = state.user?.role === "admin"
+    ? `<button class="small danger" type="button" data-delete-event="${eventItem.id}">Remove event</button>`
+    : "";
+  return `
+    <article id="event-${eventItem.id}" class="event-card">
+      <div>
+        <p class="eyebrow">Selected event</p>
+        <h3>${escapeHtml(eventItem.title || "Bowling")}</h3>
+        <p>${escapeHtml(eventItem.date)} - practice ${escapeHtml(eventItem.practiceTime || "")}</p>
+        <p>Start ${escapeHtml(eventItem.startTime || "")} - Lane ${escapeHtml(eventItem.lane || "TBD")} - ${escapeHtml(eventItem.opponent || "Opponent TBD")}</p>
+      </div>
+      <div class="row-actions">
+        <button class="small ghost" type="button" data-ics="${eventItem.id}">Calendar event</button>
+        <button class="small" type="button" data-sub-request="${eventItem.id}">Need a sub</button>
+        ${adminControls}
+      </div>
+      ${request ? renderSubRequest(request) : ""}
+    </article>
+  `;
 }
 
 function renderCalendarGrid() {
@@ -254,7 +279,7 @@ function renderCalendarGrid() {
           ${events.map((eventItem) => {
             const request = state.subRequests.find((item) => item.eventId === eventItem.id);
             return `
-              <button class="calendar-event" type="button" data-jump-event="${eventItem.id}">
+              <button class="calendar-event ${eventItem.id === state.selectedCalendarEventId ? "is-selected" : ""}" type="button" data-select-event="${eventItem.id}">
                 ${escapeHtml(eventItem.opponent || eventItem.title || "Bowling")}
                 ${request ? `<span>Sub needed</span>` : ""}
               </button>
@@ -591,6 +616,7 @@ $("#calendarList").addEventListener("click", async (event) => {
       const data = await api(`/api/calendar/events/${deleteEventButton.dataset.deleteEvent}`, { method: "DELETE" });
       state.events = data.events;
       state.subRequests = data.subRequests;
+      if (state.selectedCalendarEventId === deleteEventButton.dataset.deleteEvent) state.selectedCalendarEventId = null;
       renderHome();
       renderCalendar();
       toast("Calendar event removed.");
@@ -648,9 +674,11 @@ $("#calendarList").addEventListener("click", async (event) => {
 });
 
 $("#calendarGrid").addEventListener("click", (event) => {
-  const button = event.target.closest("[data-jump-event]");
+  const button = event.target.closest("[data-select-event]");
   if (!button) return;
-  document.getElementById(`event-${button.dataset.jumpEvent}`)?.scrollIntoView({ behavior: "smooth", block: "start" });
+  state.selectedCalendarEventId = button.dataset.selectEvent;
+  renderCalendar();
+  $("#calendarList").scrollIntoView({ behavior: "smooth", block: "start" });
 });
 
 $("#downloadAllIcs").addEventListener("click", () => {
@@ -666,6 +694,7 @@ $("#quickEventForm").addEventListener("submit", async (event) => {
     payload.title = payload.opponent ? `Bowling vs ${payload.opponent}` : "Test bowling night";
     const data = await api("/api/calendar/events", { method: "POST", body: JSON.stringify(payload) });
     state.events = data.events;
+    state.selectedCalendarEventId = [...state.events].sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)))[0]?.id || state.selectedCalendarEventId;
     renderCalendar();
     toast("Calendar event added.");
   } catch (error) {

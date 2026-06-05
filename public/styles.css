@@ -342,6 +342,16 @@ textarea:-webkit-autofill {
   text-transform: uppercase;
 }
 
+.calendar-event.is-selected {
+  background: var(--accent);
+  border-color: var(--accent-dark);
+  box-shadow: inset 0 0 0 1px var(--accent-dark);
+}
+
+.calendar-event.is-selected span {
+  color: #111111;
+}
+
 .event-card { display: grid; gap: 0.8rem; }
 .sub-box { background: #fff4e8; }
 

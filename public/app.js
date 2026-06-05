@@ -258,7 +258,7 @@ function renderGraph(series) {
   const percents = allPoints.map((point) => point.percentLost);
   const min = Math.min(0, ...percents);
   const max = Math.max(1, ...percents);
-  const colors = ["#b3272d", "#246b8f", "#7a4fa3", "#2f7d4f", "#c47a1f", "#455a8b"];
+  const colors = ["#f47b20", "#3f3f46", "#8f8f8f", "#111111", "#c95f11", "#5f6368"];
   const width = 900;
   const height = 340;
   const pad = { top: 24, right: 28, bottom: 42, left: 54 };

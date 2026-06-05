@@ -332,6 +332,7 @@ textarea:-webkit-autofill {
   line-height: 1.15;
   text-align: left;
   overflow-wrap: anywhere;
+  hyphens: auto;
 }
 
 .calendar-event span {
@@ -408,9 +409,37 @@ th { color: var(--muted); font-size: 0.76rem; text-transform: uppercase; }
   .note-actions { justify-content: stretch; }
   .row-actions { display: grid; }
   .app-header { grid-template-columns: 1fr auto; }
-  .calendar-grid { gap: 0.22rem; }
-  .calendar-day { min-height: 74px; padding: 0.32rem; }
-  .calendar-event { padding: 0.32rem; font-size: 0.65rem; }
+  #quickEventForm {
+    grid-template-columns: 1fr;
+    align-items: stretch;
+  }
+  .calendar-grid { gap: 0.24rem; }
+  .calendar-day {
+    min-height: 58px;
+    padding: 0.28rem;
+    border-radius: 6px;
+  }
+  .calendar-day:has(.calendar-event) {
+    min-height: 82px;
+  }
+  .calendar-event {
+    min-height: 24px;
+    padding: 0.28rem;
+    font-size: 0;
+    line-height: 1;
+    text-align: center;
+  }
+  .calendar-event::before {
+    content: "Event";
+    display: block;
+    font-size: 0.62rem;
+    line-height: 1;
+  }
+  .calendar-event span {
+    margin-top: 0.18rem;
+    font-size: 0.56rem;
+    line-height: 1;
+  }
   table { min-width: 480px; }
   .graph-wrap svg { min-width: 520px; }
 }
@@ -423,8 +452,10 @@ th { color: var(--muted); font-size: 0.76rem; text-transform: uppercase; }
   .calendar-toolbar { grid-template-columns: 1fr; }
   .calendar-toolbar strong { order: -1; }
   .calendar-day-name { font-size: 0.62rem; }
-  .calendar-day { min-height: 62px; border-radius: 6px; }
-  .calendar-event { font-size: 0.58rem; }
+  .calendar-day { min-height: 54px; border-radius: 6px; }
+  .calendar-day:has(.calendar-event) { min-height: 76px; }
+  .calendar-event::before { content: "View"; font-size: 0.56rem; }
+  .calendar-event span { font-size: 0.5rem; }
   table { min-width: 420px; }
   .graph-wrap svg { min-width: 460px; }
 }

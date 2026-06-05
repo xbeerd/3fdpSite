@@ -243,7 +243,7 @@ function renderSelectedCalendarEvent() {
         <p>Start ${escapeHtml(eventItem.startTime || "")} - Lane ${escapeHtml(eventItem.lane || "TBD")} - ${escapeHtml(eventItem.opponent || "Opponent TBD")}</p>
       </div>
       <div class="row-actions">
-        <button class="small ghost" type="button" data-ics="${eventItem.id}">Calendar event</button>
+        <button class="small ghost" type="button" data-ics="${eventItem.id}">Add to Calendar</button>
         <button class="small" type="button" data-sub-request="${eventItem.id}">Need a sub</button>
         ${adminControls}
       </div>

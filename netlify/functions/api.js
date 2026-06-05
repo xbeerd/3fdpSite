@@ -37,9 +37,12 @@ function json(statusCode, body, headers = {}) {
 }
 
 async function getBlobStore() {
-  if (!process.env.NETLIFY && !process.env.NETLIFY_DEV) return null;
-  const { getStore } = require("@netlify/blobs");
-  return getStore("3fdp-site-data");
+  try {
+    const { getStore } = require("@netlify/blobs");
+    return getStore("3fdp-site-data");
+  } catch {
+    return null;
+  }
 }
 
 async function loadData() {
@@ -70,6 +73,9 @@ async function saveData(data) {
   if (store) {
     await store.setJSON("data", data);
   } else {
+    if (process.env.AWS_LAMBDA_FUNCTION_NAME || process.env.NETLIFY || process.env.CONTEXT) {
+      throw new Error("Hosted data store is unavailable. Check that @netlify/blobs installed during deploy.");
+    }
     fs.writeFileSync(DATA_FILE, JSON.stringify(data, null, 2));
   }
 }

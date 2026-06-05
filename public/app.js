@@ -432,8 +432,9 @@ $("#nextMonth").addEventListener("click", () => moveCalendarMonth(1));
 
 $("#loginForm").addEventListener("submit", async (event) => {
   event.preventDefault();
+  const form = event.currentTarget;
   try {
-    const data = await api("/api/login", { method: "POST", body: JSON.stringify(Object.fromEntries(new FormData(event.currentTarget))) });
+    const data = await api("/api/login", { method: "POST", body: JSON.stringify(Object.fromEntries(new FormData(form))) });
     state.user = data.user;
     state.view = "home";
     await refreshBootstrap();
@@ -446,10 +447,11 @@ $("#loginForm").addEventListener("submit", async (event) => {
 
 $("#registerForm").addEventListener("submit", async (event) => {
   event.preventDefault();
-  const form = new FormData(event.currentTarget);
+  const form = event.currentTarget;
+  const formData = new FormData(form);
   try {
-    await api("/api/register", { method: "POST", body: JSON.stringify(Object.fromEntries(form)) });
-    const data = await api("/api/login", { method: "POST", body: JSON.stringify({ email: form.get("email"), password: form.get("password") }) });
+    await api("/api/register", { method: "POST", body: JSON.stringify(Object.fromEntries(formData)) });
+    const data = await api("/api/login", { method: "POST", body: JSON.stringify({ email: formData.get("email"), password: formData.get("password") }) });
     state.user = data.user;
     state.view = "home";
     await refreshBootstrap();
@@ -462,8 +464,9 @@ $("#registerForm").addEventListener("submit", async (event) => {
 
 $("#passwordSetupForm").addEventListener("submit", async (event) => {
   event.preventDefault();
+  const form = event.currentTarget;
   try {
-    const data = await api("/api/set-password", { method: "POST", body: JSON.stringify(Object.fromEntries(new FormData(event.currentTarget))) });
+    const data = await api("/api/set-password", { method: "POST", body: JSON.stringify(Object.fromEntries(new FormData(form))) });
     state.user = data.user;
     state.view = "home";
     await refreshBootstrap();
@@ -475,10 +478,11 @@ $("#passwordSetupForm").addEventListener("submit", async (event) => {
 
 $("#noteForm").addEventListener("submit", async (event) => {
   event.preventDefault();
+  const form = event.currentTarget;
   try {
-    const data = await api("/api/notes", { method: "POST", body: JSON.stringify(Object.fromEntries(new FormData(event.currentTarget))) });
+    const data = await api("/api/notes", { method: "POST", body: JSON.stringify(Object.fromEntries(new FormData(form))) });
     state.notes = data.notes;
-    event.currentTarget.reset();
+    form.reset();
     renderHome();
   } catch (error) {
     toast(error.message);
@@ -529,8 +533,9 @@ $("#downloadAllIcs").addEventListener("click", () => {
 
 $("#quickEventForm").addEventListener("submit", async (event) => {
   event.preventDefault();
+  const form = event.currentTarget;
   try {
-    const payload = Object.fromEntries(new FormData(event.currentTarget));
+    const payload = Object.fromEntries(new FormData(form));
     payload.title = payload.opponent ? `Bowling vs ${payload.opponent}` : "Test bowling night";
     const data = await api("/api/calendar/events", { method: "POST", body: JSON.stringify(payload) });
     state.events = data.events;
@@ -543,11 +548,12 @@ $("#quickEventForm").addEventListener("submit", async (event) => {
 
 $("#weightForm").addEventListener("submit", async (event) => {
   event.preventDefault();
-  const payload = Object.fromEntries(new FormData(event.currentTarget));
+  const form = event.currentTarget;
+  const payload = Object.fromEntries(new FormData(form));
   if (!payload.date) payload.date = todayYmd();
   try {
     await api("/api/weights", { method: "POST", body: JSON.stringify(payload) });
-    event.currentTarget.reset();
+    form.reset();
     await refreshWeightsAndBoard();
     toast("Weight saved.");
   } catch (error) {
@@ -559,8 +565,9 @@ $("#rangeForm").addEventListener("change", refreshWeightsAndBoard);
 
 $("#configForm").addEventListener("submit", async (event) => {
   event.preventDefault();
+  const form = event.currentTarget;
   try {
-    const data = await api("/api/admin/config", { method: "PUT", body: JSON.stringify(Object.fromEntries(new FormData(event.currentTarget))) });
+    const data = await api("/api/admin/config", { method: "PUT", body: JSON.stringify(Object.fromEntries(new FormData(form))) });
     state.config = data.config;
     state.schedule = data.schedule;
     renderContestHeader();
@@ -573,7 +580,8 @@ $("#configForm").addEventListener("submit", async (event) => {
 
 $("#csvForm").addEventListener("submit", async (event) => {
   event.preventDefault();
-  const file = event.currentTarget.elements.csv.files[0];
+  const form = event.currentTarget;
+  const file = form.elements.csv.files[0];
   if (!file) return toast("Choose a CSV file.");
   try {
     const events = csvToEvents(await file.text());
@@ -588,10 +596,11 @@ $("#csvForm").addEventListener("submit", async (event) => {
 
 $("#adminCreateUserForm").addEventListener("submit", async (event) => {
   event.preventDefault();
+  const form = event.currentTarget;
   try {
-    await api("/api/admin/users", { method: "POST", body: JSON.stringify(Object.fromEntries(new FormData(event.currentTarget))) });
-    event.currentTarget.reset();
-    event.currentTarget.elements.password.value = "changeme123";
+    await api("/api/admin/users", { method: "POST", body: JSON.stringify(Object.fromEntries(new FormData(form))) });
+    form.reset();
+    form.elements.password.value = "changeme123";
     await refreshAdmin();
     toast("User created.");
   } catch (error) {

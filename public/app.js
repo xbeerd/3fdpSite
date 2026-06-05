@@ -241,6 +241,7 @@ function renderSelectedCalendarEvent() {
         <h3>${escapeHtml(eventItem.title || "Bowling")}</h3>
         <p>${escapeHtml(eventItem.date)} - practice ${escapeHtml(eventItem.practiceTime || "")}</p>
         <p>Start ${escapeHtml(eventItem.startTime || "")} - Lane ${escapeHtml(eventItem.lane || "TBD")} - ${escapeHtml(eventItem.opponent || "Opponent TBD")}</p>
+        ${eventItem.location ? `<p>Location: ${escapeHtml(eventItem.location)}</p>` : ""}
       </div>
       <div class="row-actions">
         <button class="small ghost" type="button" data-ics="${eventItem.id}">Add to Calendar</button>
@@ -448,19 +449,79 @@ function renderAdmin() {
   `).join("");
 }
 
+function parseCsvLine(line) {
+  const values = [];
+  let current = "";
+  let quoted = false;
+  for (let index = 0; index < line.length; index += 1) {
+    const character = line[index];
+    const next = line[index + 1];
+    if (character === '"' && quoted && next === '"') {
+      current += '"';
+      index += 1;
+    } else if (character === '"') {
+      quoted = !quoted;
+    } else if (character === "," && !quoted) {
+      values.push(current.trim());
+      current = "";
+    } else {
+      current += character;
+    }
+  }
+  values.push(current.trim());
+  return values;
+}
+
+function normalizeCsvDate(value) {
+  const text = String(value || "").trim();
+  if (/^\d{4}-\d{2}-\d{2}$/.test(text)) return text;
+  const match = text.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+  if (!match) return text;
+  return `${match[3]}-${match[1].padStart(2, "0")}-${match[2].padStart(2, "0")}`;
+}
+
 function csvToEvents(text) {
   const lines = text.trim().split(/\r?\n/).filter(Boolean);
-  const headers = lines.shift().split(",").map((header) => header.trim());
+  const headers = parseCsvLine(lines.shift());
+  const keyForHeader = (header) => header.toLowerCase().replace(/[^a-z0-9]/g, "");
   return lines.map((line) => {
-    const values = line.split(",").map((value) => value.trim());
-    return Object.fromEntries(headers.map((header, index) => [header, values[index] || ""]));
+    const values = parseCsvLine(line);
+    const row = {};
+    headers.forEach((header, index) => {
+      const value = values[index] || "";
+      const key = keyForHeader(header);
+      if (key === "date") row.date = normalizeCsvDate(value);
+      if (key === "location" && value && !row.location) row.location = value;
+      if (key === "leaguename") row.leagueName = value;
+      if (key === "lane") row.lane = value;
+      if (key === "opponent") row.opponent = value;
+      if (key === "starttime") row.startTime = value;
+      if (key === "practicetime") row.practiceTime = value;
+    });
+    row.title = row.leagueName
+      ? `${row.leagueName}${row.opponent ? ` vs ${row.opponent}` : ""}`
+      : `Bowling vs ${row.opponent || "TBD"}`;
+    return row;
   });
+}
+
+function timeToIcs(time, fallback = "18:30") {
+  const value = String(time || fallback).trim();
+  const standard = value.match(/^(\d{1,2}):(\d{2})(?::\d{2})?$/);
+  if (standard) return `${standard[1].padStart(2, "0")}${standard[2]}00`;
+  const amPm = value.match(/^(\d{1,2})(?::(\d{2}))?\s*([ap]m)$/i);
+  if (!amPm) return timeToIcs(fallback);
+  let hour = Number(amPm[1]);
+  const minute = amPm[2] || "00";
+  const suffix = amPm[3].toLowerCase();
+  if (suffix === "pm" && hour < 12) hour += 12;
+  if (suffix === "am" && hour === 12) hour = 0;
+  return `${String(hour).padStart(2, "0")}${minute}00`;
 }
 
 function eventToIcs(eventItem) {
   const date = eventItem.date.replaceAll("-", "");
-  const start = (eventItem.startTime || "18:30").replace(":", "") + "00";
-  const practice = (eventItem.practiceTime || eventItem.startTime || "18:30").replace(":", "") + "00";
+  const practice = timeToIcs(eventItem.practiceTime || eventItem.startTime);
   return [
     "BEGIN:VCALENDAR",
     "VERSION:2.0",
@@ -470,10 +531,11 @@ function eventToIcs(eventItem) {
     `DTSTAMP:${new Date().toISOString().replace(/[-:]/g, "").split(".")[0]}Z`,
     `DTSTART:${date}T${practice}`,
     `SUMMARY:${eventItem.title || "Bowling"}`,
-    `DESCRIPTION:Start ${eventItem.startTime || ""}; Lane ${eventItem.lane || ""}; Opponent ${eventItem.opponent || ""}`,
+    eventItem.location ? `LOCATION:${eventItem.location}` : "",
+    `DESCRIPTION:Start ${eventItem.startTime || ""}; Lane ${eventItem.lane || ""}; Opponent ${eventItem.opponent || ""}${eventItem.location ? `; Location ${eventItem.location}` : ""}`,
     "END:VEVENT",
     "END:VCALENDAR"
-  ].join("\r\n");
+  ].filter(Boolean).join("\r\n");
 }
 
 function downloadText(filename, text, type = "text/calendar") {

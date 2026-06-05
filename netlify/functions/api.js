@@ -520,8 +520,10 @@ exports.handler = async (event) => {
           startTime: row.startTime || data.config.bowlingStartTime,
           practiceTime: row.practiceTime || data.config.practiceStartTime,
           lane: row.lane || "",
+          location: row.location || "",
+          leagueName: row.leagueName || "",
           opponent: row.opponent || "",
-          title: row.title || `Bowling vs ${row.opponent || "TBD"}`
+          title: row.title || (row.leagueName ? `${row.leagueName}${row.opponent ? ` vs ${row.opponent}` : ""}` : `Bowling vs ${row.opponent || "TBD"}`)
         });
         if (!existing) data.calendarEvents.push(eventItem);
       }

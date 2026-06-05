@@ -85,6 +85,7 @@
           <div id="calendarGrid" class="calendar-grid"></div>
           <form id="quickEventForm" class="form inline-form admin-only hidden">
             <label>Date <input name="date" type="date" required></label>
+            <label>Location <input name="location" type="text" placeholder="Bowling alley"></label>
             <label>Lane <input name="lane" type="text" placeholder="TBD"></label>
             <label>Opponent <input name="opponent" type="text" placeholder="Test opponent"></label>
             <label>Start <input name="startTime" type="time"></label>
@@ -160,7 +161,7 @@
         <section class="panel">
           <p class="eyebrow">Schedule Upload</p>
           <h2>CSV schedule import</h2>
-          <p class="hint">CSV headers: date,lane,opponent,startTime,practiceTime</p>
+          <p class="hint">CSV headers: Date, Location, League Name, Lane, Opponent, Start time, Practice Time, Location</p>
           <form id="csvForm" class="form">
             <label>Schedule CSV <input name="csv" type="file" accept=".csv,text/csv"></label>
             <button type="submit">Upload schedule</button>

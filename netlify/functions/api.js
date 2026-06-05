@@ -302,8 +302,22 @@ function validateWeight(weight) {
   return Number.isFinite(value) && value > 0 && value < 1500 ? value : null;
 }
 
+function normalizeNote(note) {
+  return {
+    ...note,
+    comments: (note.comments || []).sort((a, b) => String(a.createdAt).localeCompare(String(b.createdAt)))
+  };
+}
+
 function sortedNotes(data) {
-  return [...data.notes].sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt))).slice(0, 50);
+  return [...data.notes]
+    .map(normalizeNote)
+    .sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)))
+    .slice(0, 50);
+}
+
+function findNote(data, noteId) {
+  return data.notes.find((note) => note.id === noteId);
 }
 
 function visibleSubRequests(data) {
@@ -448,7 +462,41 @@ exports.handler = async (event) => {
       const body = parseBody(event);
       const text = String(body.text || "").trim();
       if (!text) return json(400, { error: "Note cannot be blank." });
-      data.notes.push({ id: crypto.randomUUID(), userId: user.id, username: user.username, text, createdAt: new Date().toISOString() });
+      data.notes.push({ id: crypto.randomUUID(), userId: user.id, username: user.username, text, comments: [], createdAt: new Date().toISOString() });
+      await saveData(data);
+      return json(201, { notes: sortedNotes(data) });
+    }
+
+    if (method === "PUT" && /^\/notes\/[^/]+$/.test(route)) {
+      requireAdmin(event, data);
+      const note = findNote(data, decodeURIComponent(route.split("/")[2]));
+      const text = String(parseBody(event).text || "").trim();
+      if (!note) return json(404, { error: "Blog entry not found." });
+      if (!text) return json(400, { error: "Blog entry cannot be blank." });
+      note.text = text;
+      note.updatedAt = new Date().toISOString();
+      await saveData(data);
+      return json(200, { notes: sortedNotes(data) });
+    }
+
+    if (method === "DELETE" && /^\/notes\/[^/]+$/.test(route)) {
+      requireAdmin(event, data);
+      const noteId = decodeURIComponent(route.split("/")[2]);
+      const beforeCount = data.notes.length;
+      data.notes = data.notes.filter((note) => note.id !== noteId);
+      if (data.notes.length === beforeCount) return json(404, { error: "Blog entry not found." });
+      await saveData(data);
+      return json(200, { notes: sortedNotes(data) });
+    }
+
+    if (method === "POST" && /^\/notes\/[^/]+\/comments$/.test(route)) {
+      const user = requireUser(event, data);
+      const note = findNote(data, decodeURIComponent(route.split("/")[2]));
+      const text = String(parseBody(event).text || "").trim();
+      if (!note) return json(404, { error: "Blog entry not found." });
+      if (!text) return json(400, { error: "Comment cannot be blank." });
+      note.comments = note.comments || [];
+      note.comments.push({ id: crypto.randomUUID(), userId: user.id, username: user.username, text, createdAt: new Date().toISOString() });
       await saveData(data);
       return json(201, { notes: sortedNotes(data) });
     }

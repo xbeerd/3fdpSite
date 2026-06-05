@@ -149,14 +149,48 @@ function renderHome() {
     : `<p class="hint">No open sub requests right now.</p>`;
 
   $("#notesList").innerHTML = state.notes.length
-    ? state.notes.map((note) => `
-      <article class="feed-item">
-        <strong>${escapeHtml(note.username)}</strong>
-        <p>${escapeHtml(note.text)}</p>
-        <span>${new Date(note.createdAt).toLocaleString()}</span>
+    ? state.notes.map(renderNote).join("")
+    : `<p class="empty">No notes yet.</p>`;
+}
+
+function renderNote(note) {
+  const adminControls = state.user?.role === "admin"
+    ? `
+      <div class="row-actions note-actions">
+        <button class="small ghost" type="button" data-edit-note="${note.id}">Edit</button>
+        <button class="small danger" type="button" data-delete-note="${note.id}">Delete</button>
+      </div>
+    `
+    : "";
+  const comments = note.comments?.length
+    ? note.comments.map((comment) => `
+      <article class="comment-item">
+        <strong>${escapeHtml(comment.username)}</strong>
+        <p>${escapeHtml(comment.text)}</p>
+        <span>${new Date(comment.createdAt).toLocaleString()}</span>
       </article>
     `).join("")
-    : `<p class="empty">No notes yet.</p>`;
+    : `<p class="hint">No replies yet.</p>`;
+
+  return `
+    <article class="feed-item" data-note-id="${note.id}">
+      <div class="feed-heading">
+        <div>
+          <strong>${escapeHtml(note.username)}</strong>
+          <span>${new Date(note.createdAt).toLocaleString()}${note.updatedAt ? " - edited" : ""}</span>
+        </div>
+        ${adminControls}
+      </div>
+      <p>${escapeHtml(note.text)}</p>
+      <div class="comments">
+        ${comments}
+        <form class="comment-form" data-comment-form="${note.id}">
+          <label>Reply <textarea name="text" rows="2" placeholder="Write a reply..."></textarea></label>
+          <button class="small" type="submit">Post reply</button>
+        </form>
+      </div>
+    </article>
+  `;
 }
 
 function renderCalendar() {
@@ -484,6 +518,46 @@ $("#noteForm").addEventListener("submit", async (event) => {
     state.notes = data.notes;
     form.reset();
     renderHome();
+  } catch (error) {
+    toast(error.message);
+  }
+});
+
+$("#notesList").addEventListener("click", async (event) => {
+  const edit = event.target.closest("[data-edit-note]");
+  const del = event.target.closest("[data-delete-note]");
+  try {
+    if (edit) {
+      const note = state.notes.find((item) => item.id === edit.dataset.editNote);
+      if (!note) return;
+      const text = prompt("Edit blog entry:", note.text);
+      if (text === null) return;
+      const data = await api(`/api/notes/${edit.dataset.editNote}`, { method: "PUT", body: JSON.stringify({ text }) });
+      state.notes = data.notes;
+      renderHome();
+      toast("Blog entry updated.");
+    }
+    if (del && confirm("Delete this blog entry and its replies?")) {
+      const data = await api(`/api/notes/${del.dataset.deleteNote}`, { method: "DELETE" });
+      state.notes = data.notes;
+      renderHome();
+      toast("Blog entry deleted.");
+    }
+  } catch (error) {
+    toast(error.message);
+  }
+});
+
+$("#notesList").addEventListener("submit", async (event) => {
+  const form = event.target.closest("[data-comment-form]");
+  if (!form) return;
+  event.preventDefault();
+  try {
+    const data = await api(`/api/notes/${form.dataset.commentForm}/comments`, { method: "POST", body: JSON.stringify(Object.fromEntries(new FormData(form))) });
+    state.notes = data.notes;
+    form.reset();
+    renderHome();
+    toast("Reply posted.");
   } catch (error) {
     toast(error.message);
   }

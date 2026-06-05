@@ -78,6 +78,20 @@
             </div>
             <button id="downloadAllIcs" type="button" class="ghost">Download season</button>
           </div>
+          <div class="calendar-toolbar">
+            <button id="prevMonth" type="button" class="ghost small">Previous</button>
+            <strong id="calendarMonthLabel"></strong>
+            <button id="nextMonth" type="button" class="ghost small">Next</button>
+          </div>
+          <div id="calendarGrid" class="calendar-grid"></div>
+          <form id="quickEventForm" class="form inline-form admin-only hidden">
+            <label>Date <input name="date" type="date" required></label>
+            <label>Lane <input name="lane" type="text" placeholder="TBD"></label>
+            <label>Opponent <input name="opponent" type="text" placeholder="Test opponent"></label>
+            <label>Start <input name="startTime" type="time"></label>
+            <label>Practice <input name="practiceTime" type="time"></label>
+            <button type="submit">Add test event</button>
+          </form>
           <div id="calendarList" class="card-list"></div>
         </section>
       </section>

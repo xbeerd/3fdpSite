@@ -10,6 +10,7 @@ const state = {
   graphSeries: [],
   adminUsers: [],
   adminSetupOpen: false,
+  calendarCursor: new Date().toISOString().slice(0, 7),
   view: "home"
 };
 
@@ -80,6 +81,25 @@ function todayYmd() {
   return new Date().toISOString().slice(0, 10);
 }
 
+function localYmd(date) {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+function monthLabel(cursor) {
+  const [year, month] = cursor.split("-").map(Number);
+  return new Date(year, month - 1, 1).toLocaleDateString(undefined, { month: "long", year: "numeric" });
+}
+
+function moveCalendarMonth(delta) {
+  const [year, month] = state.calendarCursor.split("-").map(Number);
+  const next = new Date(year, month - 1 + delta, 1);
+  state.calendarCursor = `${next.getFullYear()}-${String(next.getMonth() + 1).padStart(2, "0")}`;
+  renderCalendar();
+}
+
 async function refreshBootstrap() {
   const data = await api("/api/bootstrap");
   state.config = data.config;
@@ -140,11 +160,19 @@ function renderHome() {
 }
 
 function renderCalendar() {
+  renderCalendarGrid();
+  const quickForm = $("#quickEventForm");
+  if (quickForm && !quickForm.elements.date.value) {
+    quickForm.elements.date.value = todayYmd();
+    quickForm.elements.startTime.value = state.config.bowlingStartTime || "";
+    quickForm.elements.practiceTime.value = state.config.practiceStartTime || "";
+  }
+
   $("#calendarList").innerHTML = state.events.length
     ? state.events.map((eventItem) => {
       const request = state.subRequests.find((item) => item.eventId === eventItem.id);
       return `
-        <article class="event-card">
+        <article id="event-${eventItem.id}" class="event-card">
           <div>
             <p class="eyebrow">${escapeHtml(eventItem.date)} - practice ${escapeHtml(eventItem.practiceTime || "")}</p>
             <h3>${escapeHtml(eventItem.title || "Bowling")}</h3>
@@ -159,6 +187,45 @@ function renderCalendar() {
       `;
     }).join("")
     : `<p class="empty">No schedule loaded yet.</p>`;
+}
+
+function renderCalendarGrid() {
+  const [year, month] = state.calendarCursor.split("-").map(Number);
+  const first = new Date(year, month - 1, 1);
+  const start = new Date(first);
+  start.setDate(1 - first.getDay());
+  const days = Array.from({ length: 42 }, (_, index) => {
+    const date = new Date(start);
+    date.setDate(start.getDate() + index);
+    return date;
+  });
+  const eventsByDate = state.events.reduce((map, eventItem) => {
+    map.set(eventItem.date, [...(map.get(eventItem.date) || []), eventItem]);
+    return map;
+  }, new Map());
+
+  $("#calendarMonthLabel").textContent = monthLabel(state.calendarCursor);
+  $("#calendarGrid").innerHTML = `
+    ${["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].map((day) => `<div class="calendar-day-name">${day}</div>`).join("")}
+    ${days.map((date) => {
+      const ymd = localYmd(date);
+      const events = eventsByDate.get(ymd) || [];
+      return `
+        <article class="calendar-day ${date.getMonth() === month - 1 ? "" : "is-muted"} ${ymd === todayYmd() ? "is-today" : ""}">
+          <strong>${date.getDate()}</strong>
+          ${events.map((eventItem) => {
+            const request = state.subRequests.find((item) => item.eventId === eventItem.id);
+            return `
+              <button class="calendar-event" type="button" data-jump-event="${eventItem.id}">
+                ${escapeHtml(eventItem.opponent || eventItem.title || "Bowling")}
+                ${request ? `<span>Sub needed</span>` : ""}
+              </button>
+            `;
+          }).join("")}
+        </article>
+      `;
+    }).join("")}
+  `;
 }
 
 function renderSubRequest(request) {
@@ -360,6 +427,8 @@ $("#menuAuthBtn").addEventListener("click", async () => {
   if (state.user) await logout();
   else setView("login");
 });
+$("#prevMonth").addEventListener("click", () => moveCalendarMonth(-1));
+$("#nextMonth").addEventListener("click", () => moveCalendarMonth(1));
 
 $("#loginForm").addEventListener("submit", async (event) => {
   event.preventDefault();
@@ -447,9 +516,29 @@ $("#calendarList").addEventListener("click", async (event) => {
   }
 });
 
+$("#calendarGrid").addEventListener("click", (event) => {
+  const button = event.target.closest("[data-jump-event]");
+  if (!button) return;
+  document.getElementById(`event-${button.dataset.jumpEvent}`)?.scrollIntoView({ behavior: "smooth", block: "start" });
+});
+
 $("#downloadAllIcs").addEventListener("click", () => {
   if (!state.events.length) return toast("No events to download.");
   downloadText("3fdp-season.ics", state.events.map(eventToIcs).join("\r\n"));
+});
+
+$("#quickEventForm").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  try {
+    const payload = Object.fromEntries(new FormData(event.currentTarget));
+    payload.title = payload.opponent ? `Bowling vs ${payload.opponent}` : "Test bowling night";
+    const data = await api("/api/calendar/events", { method: "POST", body: JSON.stringify(payload) });
+    state.events = data.events;
+    renderCalendar();
+    toast("Calendar event added.");
+  } catch (error) {
+    toast(error.message);
+  }
 });
 
 $("#weightForm").addEventListener("submit", async (event) => {

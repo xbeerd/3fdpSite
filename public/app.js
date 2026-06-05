@@ -205,6 +205,9 @@ function renderCalendar() {
   $("#calendarList").innerHTML = state.events.length
     ? state.events.map((eventItem) => {
       const request = state.subRequests.find((item) => item.eventId === eventItem.id);
+      const adminControls = state.user?.role === "admin"
+        ? `<button class="small danger" type="button" data-delete-event="${eventItem.id}">Remove event</button>`
+        : "";
       return `
         <article id="event-${eventItem.id}" class="event-card">
           <div>
@@ -215,6 +218,7 @@ function renderCalendar() {
           <div class="row-actions">
             <button class="small ghost" type="button" data-ics="${eventItem.id}">Calendar event</button>
             <button class="small" type="button" data-sub-request="${eventItem.id}">Need a sub</button>
+            ${adminControls}
           </div>
           ${request ? renderSubRequest(request) : ""}
         </article>
@@ -265,15 +269,23 @@ function renderCalendarGrid() {
 function renderSubRequest(request) {
   const yes = request.responses.filter((item) => item.response === "can").map((item) => item.username).join(", ") || "No one yet";
   const no = request.responses.filter((item) => item.response === "cant").map((item) => item.username).join(", ") || "No one yet";
+  const canManage = state.user?.id === request.requestedByUserId || state.user?.role === "admin";
+  const ownerControls = canManage
+    ? `
+      <button class="small ghost" type="button" data-edit-sub-request="${request.id}">Edit request</button>
+      <button class="small danger" type="button" data-delete-sub-request="${request.id}">Cancel request</button>
+    `
+    : "";
   return `
     <div class="sub-box">
       <strong>${escapeHtml(request.requestedBy)} needs a sub</strong>
-      <p>${escapeHtml(request.note || "")}</p>
+      <p>${escapeHtml(request.note || "")}${request.updatedAt ? ` <span class="muted">(edited)</span>` : ""}</p>
       <p><b>Can:</b> ${escapeHtml(yes)}</p>
       <p><b>Can't:</b> ${escapeHtml(no)}</p>
       <div class="row-actions">
         <button class="small" type="button" data-sub-response="${request.id}" data-response="can">I can sub</button>
         <button class="small ghost" type="button" data-sub-response="${request.id}" data-response="cant">I can't sub</button>
+        ${ownerControls}
       </div>
     </div>
   `;
@@ -567,9 +579,24 @@ $("#calendarList").addEventListener("click", async (event) => {
   const subButton = event.target.closest("[data-sub-request]");
   const responseButton = event.target.closest("[data-sub-response]");
   const icsButton = event.target.closest("[data-ics]");
+  const deleteEventButton = event.target.closest("[data-delete-event]");
+  const editSubButton = event.target.closest("[data-edit-sub-request]");
+  const deleteSubButton = event.target.closest("[data-delete-sub-request]");
   if (icsButton) {
     const eventItem = state.events.find((item) => item.id === icsButton.dataset.ics);
     if (eventItem) downloadText(`${eventItem.date}-bowling.ics`, eventToIcs(eventItem));
+  }
+  if (deleteEventButton && confirm("Remove this calendar event and any related sub requests?")) {
+    try {
+      const data = await api(`/api/calendar/events/${deleteEventButton.dataset.deleteEvent}`, { method: "DELETE" });
+      state.events = data.events;
+      state.subRequests = data.subRequests;
+      renderHome();
+      renderCalendar();
+      toast("Calendar event removed.");
+    } catch (error) {
+      toast(error.message);
+    }
   }
   if (subButton) {
     const note = prompt("Anything people should know?");
@@ -588,6 +615,32 @@ $("#calendarList").addEventListener("click", async (event) => {
       state.subRequests = data.subRequests;
       renderHome();
       renderCalendar();
+    } catch (error) {
+      toast(error.message);
+    }
+  }
+  if (editSubButton) {
+    const request = state.subRequests.find((item) => item.id === editSubButton.dataset.editSubRequest);
+    if (!request) return;
+    const note = prompt("Edit sub request note:", request.note || "");
+    if (note === null) return;
+    try {
+      const data = await api(`/api/sub-requests/${editSubButton.dataset.editSubRequest}`, { method: "PUT", body: JSON.stringify({ note }) });
+      state.subRequests = data.subRequests;
+      renderHome();
+      renderCalendar();
+      toast("Sub request updated.");
+    } catch (error) {
+      toast(error.message);
+    }
+  }
+  if (deleteSubButton && confirm("Cancel this sub request?")) {
+    try {
+      const data = await api(`/api/sub-requests/${deleteSubButton.dataset.deleteSubRequest}`, { method: "DELETE" });
+      state.subRequests = data.subRequests;
+      renderHome();
+      renderCalendar();
+      toast("Sub request canceled.");
     } catch (error) {
       toast(error.message);
     }

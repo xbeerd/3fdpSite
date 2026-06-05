@@ -329,6 +329,10 @@ function visibleSubRequests(data) {
     .sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)));
 }
 
+function findSubRequest(data, requestId) {
+  return data.subRequests.find((request) => request.id === requestId);
+}
+
 exports.handler = async (event) => {
   connectNetlifyBlobs(event);
   const data = await loadData();
@@ -525,6 +529,17 @@ exports.handler = async (event) => {
       return json(200, { events: data.calendarEvents });
     }
 
+    if (method === "DELETE" && /^\/calendar\/events\/[^/]+$/.test(route)) {
+      requireAdmin(event, data);
+      const eventId = decodeURIComponent(route.split("/")[3]);
+      const beforeCount = data.calendarEvents.length;
+      data.calendarEvents = data.calendarEvents.filter((eventItem) => eventItem.id !== eventId);
+      if (data.calendarEvents.length === beforeCount) return json(404, { error: "Calendar event not found." });
+      data.subRequests = data.subRequests.filter((request) => request.eventId !== eventId);
+      await saveData(data);
+      return json(200, { events: data.calendarEvents, subRequests: visibleSubRequests(data) });
+    }
+
     if (method === "POST" && route === "/sub-requests") {
       const user = requireUser(event, data);
       const body = parseBody(event);
@@ -547,11 +562,33 @@ exports.handler = async (event) => {
 
     if (method === "POST" && /^\/sub-requests\/[^/]+\/respond$/.test(route)) {
       const user = requireUser(event, data);
-      const request = data.subRequests.find((candidate) => candidate.id === decodeURIComponent(route.split("/")[2]));
+      const request = findSubRequest(data, decodeURIComponent(route.split("/")[2]));
       if (!request) return json(404, { error: "Sub request not found." });
       const response = String(parseBody(event).response || "");
       request.responses = request.responses.filter((item) => item.userId !== user.id);
       request.responses.push({ userId: user.id, username: user.username, response, createdAt: new Date().toISOString() });
+      await saveData(data);
+      return json(200, { subRequests: visibleSubRequests(data) });
+    }
+
+    if (method === "PUT" && /^\/sub-requests\/[^/]+$/.test(route)) {
+      const user = requireUser(event, data);
+      const request = findSubRequest(data, decodeURIComponent(route.split("/")[2]));
+      if (!request) return json(404, { error: "Sub request not found." });
+      if (request.requestedByUserId !== user.id && user.role !== "admin") return json(403, { error: "Only the request owner or admin can edit this sub request." });
+      request.note = String(parseBody(event).note || "");
+      request.updatedAt = new Date().toISOString();
+      await saveData(data);
+      return json(200, { subRequests: visibleSubRequests(data) });
+    }
+
+    if (method === "DELETE" && /^\/sub-requests\/[^/]+$/.test(route)) {
+      const user = requireUser(event, data);
+      const requestId = decodeURIComponent(route.split("/")[2]);
+      const request = findSubRequest(data, requestId);
+      if (!request) return json(404, { error: "Sub request not found." });
+      if (request.requestedByUserId !== user.id && user.role !== "admin") return json(403, { error: "Only the request owner or admin can remove this sub request." });
+      data.subRequests = data.subRequests.filter((candidate) => candidate.id !== requestId);
       await saveData(data);
       return json(200, { subRequests: visibleSubRequests(data) });
     }

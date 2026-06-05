@@ -377,6 +377,7 @@ exports.handler = async (event) => {
 
     if (method === "GET" && route === "/bootstrap") {
       return json(200, {
+        adminSetupOpen: data.users.length === 0,
         config: data.config,
         schedule: buildSchedule(data),
         notes: sortedNotes(data),

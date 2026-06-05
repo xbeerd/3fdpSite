@@ -17,7 +17,6 @@
         <h1>Team Site</h1>
       </div>
       <button id="menuBtn" class="icon-button" type="button" aria-label="Open menu">Menu</button>
-      <button id="logoutBtn" class="ghost hidden" type="button">Log out</button>
     </header>
 
     <nav id="menu" class="menu hidden">
@@ -25,7 +24,7 @@
       <button data-view="calendar" type="button">Calendar</button>
       <button data-view="loser" type="button">Biggest Loser</button>
       <button data-view="admin" type="button" class="admin-only hidden">Admin</button>
-      <button data-view="login" type="button">Login</button>
+      <button id="menuAuthBtn" type="button">Login</button>
     </nav>
 
     <main>
@@ -42,7 +41,7 @@
           <label>Email <input name="email" type="email" required></label>
           <label>Username <input name="username" type="text" required></label>
           <label>Password <input name="password" type="password" minlength="8" required></label>
-          <label>Admin setup code <input name="setupCode" type="text" placeholder="Only needed for first admin setup"></label>
+          <label id="adminSetupCodeField" class="hidden">Admin setup code <input name="setupCode" type="text" placeholder="Only needed for first admin setup"></label>
           <button type="submit">Create account</button>
         </form>
       </section>

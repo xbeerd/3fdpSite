@@ -9,6 +9,7 @@ const state = {
   leaderboard: [],
   graphSeries: [],
   adminUsers: [],
+  adminSetupOpen: false,
   view: "home"
 };
 
@@ -54,10 +55,17 @@ function setView(view) {
 function renderShell() {
   const needsSetup = Boolean(state.user?.passwordSetupRequired);
   $$(".admin-only").forEach((node) => node.classList.toggle("hidden", state.user?.role !== "admin"));
-  $("#logoutBtn").classList.toggle("hidden", !state.user);
+  $("#menuAuthBtn").textContent = state.user ? "Log out" : "Login";
+  $("#adminSetupCodeField").classList.toggle("hidden", !state.adminSetupOpen);
   if (!state.user) setView("login");
   else if (needsSetup) setView("passwordSetup");
   else setView(state.view === "login" || state.view === "passwordSetup" ? "home" : state.view);
+}
+
+async function logout() {
+  await api("/api/logout", { method: "POST" });
+  state.user = null;
+  renderShell();
 }
 
 function weekLabel(week) {
@@ -79,6 +87,7 @@ async function refreshBootstrap() {
   state.notes = data.notes;
   state.events = data.events;
   state.subRequests = data.subRequests;
+  state.adminSetupOpen = Boolean(data.adminSetupOpen);
   renderHome();
   renderCalendar();
   renderContestHeader();
@@ -347,12 +356,17 @@ async function init() {
 
 $("#menuBtn").addEventListener("click", () => $("#menu").classList.toggle("hidden"));
 $$("[data-view]").forEach((button) => button.addEventListener("click", () => setView(button.dataset.view)));
+$("#menuAuthBtn").addEventListener("click", async () => {
+  if (state.user) await logout();
+  else setView("login");
+});
 
 $("#loginForm").addEventListener("submit", async (event) => {
   event.preventDefault();
   try {
     const data = await api("/api/login", { method: "POST", body: JSON.stringify(Object.fromEntries(new FormData(event.currentTarget))) });
     state.user = data.user;
+    state.view = "home";
     await refreshBootstrap();
     renderShell();
     toast("Logged in.");
@@ -368,8 +382,10 @@ $("#registerForm").addEventListener("submit", async (event) => {
     await api("/api/register", { method: "POST", body: JSON.stringify(Object.fromEntries(form)) });
     const data = await api("/api/login", { method: "POST", body: JSON.stringify({ email: form.get("email"), password: form.get("password") }) });
     state.user = data.user;
+    state.view = "home";
     await refreshBootstrap();
     renderShell();
+    toast("Account created.");
   } catch (error) {
     toast(error.message);
   }
@@ -380,17 +396,12 @@ $("#passwordSetupForm").addEventListener("submit", async (event) => {
   try {
     const data = await api("/api/set-password", { method: "POST", body: JSON.stringify(Object.fromEntries(new FormData(event.currentTarget))) });
     state.user = data.user;
+    state.view = "home";
     await refreshBootstrap();
     renderShell();
   } catch (error) {
     toast(error.message);
   }
-});
-
-$("#logoutBtn").addEventListener("click", async () => {
-  await api("/api/logout", { method: "POST" });
-  state.user = null;
-  renderShell();
 });
 
 $("#noteForm").addEventListener("submit", async (event) => {

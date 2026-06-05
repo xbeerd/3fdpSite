@@ -35,14 +35,15 @@ body::before {
   content: "";
   position: fixed;
   left: 50%;
-  top: 7.2rem;
-  width: min(92vw, 620px);
-  height: min(72vw, 500px);
+  right: auto;
+  bottom: 0;
+  width: min(96vw, 760px);
+  height: min(60vw, 420px);
   pointer-events: none;
-  opacity: 0.13;
-  background: url("/icon.png") center top / contain no-repeat;
+  opacity: 0.055;
+  background: url("/icon.png") center bottom / contain no-repeat;
   transform: translateX(-50%);
-  filter: grayscale(1) contrast(1.2);
+  filter: grayscale(1) contrast(1.05);
 }
 
 button, input, select, textarea { font: inherit; }
@@ -137,7 +138,7 @@ main {
 .view { display: grid; gap: 1rem; min-width: 0; }
 .panel {
   min-width: 0;
-  background: rgba(255, 253, 248, 0.94);
+  background: #ffffff;
   border: 1px solid var(--line);
   border-radius: 8px;
   padding: clamp(1rem, 3vw, 1.35rem);

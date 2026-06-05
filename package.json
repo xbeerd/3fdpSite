@@ -5,6 +5,7 @@
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
+    "build": "echo Netlify build complete",
     "check": "node --check server.js && node --check netlify/functions/api.js && node --check public/app.js"
   },
   "dependencies": {

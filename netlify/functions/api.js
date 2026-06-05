@@ -24,6 +24,14 @@ const defaultData = {
   weights: []
 };
 
+function connectNetlifyBlobs(event) {
+  try {
+    const { connectLambda } = require("@netlify/blobs");
+    if (event?.blobs) connectLambda(event);
+  } catch {
+  }
+}
+
 function json(statusCode, body, headers = {}) {
   return {
     statusCode,
@@ -308,6 +316,7 @@ function visibleSubRequests(data) {
 }
 
 exports.handler = async (event) => {
+  connectNetlifyBlobs(event);
   const data = await loadData();
   const method = event.httpMethod;
   const route = `/${(event.path || "").replace(/^\/api\/?/, "")}`.replace(/\/$/, "") || "/";

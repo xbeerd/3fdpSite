@@ -91,16 +91,16 @@
             <button id="nextMonth" type="button" class="ghost small">Next</button>
           </div>
           <div id="calendarGrid" class="calendar-grid"></div>
-          <form id="quickEventForm" class="form inline-form admin-only hidden">
+          <div id="calendarList" class="card-list"></div>
+          <form id="quickEventForm" class="form inline-form compact-event-form admin-only hidden">
             <label>Date <input name="date" type="date" required></label>
             <label>Location <input name="location" type="text" placeholder="Bowling alley"></label>
             <label>Lane <input name="lane" type="text" placeholder="TBD"></label>
             <label>Opponent <input name="opponent" type="text" placeholder="Test opponent"></label>
             <label>Start <input name="startTime" type="time"></label>
             <label>Practice <input name="practiceTime" type="time"></label>
-            <button type="submit">Add test event</button>
+            <button type="submit">Add event</button>
           </form>
-          <div id="calendarList" class="card-list"></div>
         </section>
       </section>
 

@@ -86,6 +86,23 @@ function setView(view) {
   $("#menu").classList.add("hidden");
 }
 
+function showCalendarEvent(eventId) {
+  const eventItem = state.events.find((item) => item.id === eventId);
+  if (!eventItem) return toast("Calendar event not found.");
+  state.selectedCalendarEventId = eventId;
+  state.calendarCursor = String(eventItem.date || "").slice(0, 7) || state.calendarCursor;
+  setView("calendar");
+  renderCalendar();
+  $("#calendarList").scrollIntoView({ behavior: "smooth", block: "start" });
+}
+
+async function openViewFromHash() {
+  const view = viewFromHash();
+  if (!view) return;
+  if (state.user) await refreshBootstrap();
+  setView(view);
+}
+
 function viewFromHash() {
   const value = window.location.hash.replace("#", "");
   return ["home", "calendar", "loser", "admin"].includes(value) ? value : "";
@@ -309,6 +326,7 @@ function renderHome() {
       <article class="summary-item">
         <strong>Sub needed:</strong> ${escapeHtml(request.event?.title || "Bowling")}
         <span>${escapeHtml(request.event?.date || "")}</span>
+        <button class="small ghost" type="button" data-open-sub-event="${request.eventId}">View on calendar</button>
       </article>
     `).join("")
     : `<p class="hint">No open sub requests right now.</p>`;
@@ -771,6 +789,20 @@ $$("[data-view]").forEach((button) => button.addEventListener("click", () => set
 $("#menuAuthBtn").addEventListener("click", async () => {
   if (state.user) await logout();
   else setView("login");
+});
+window.addEventListener("hashchange", () => openViewFromHash().catch((error) => toast(error.message)));
+if ("serviceWorker" in navigator) {
+  navigator.serviceWorker.addEventListener("message", (event) => {
+    if (event.data?.type === "notification-click") {
+      openViewFromHash().catch((error) => toast(error.message));
+    }
+  });
+}
+$("#subSummary").addEventListener("click", async (event) => {
+  const button = event.target.closest("[data-open-sub-event]");
+  if (!button) return;
+  await refreshBootstrap();
+  showCalendarEvent(button.dataset.openSubEvent);
 });
 $("#enablePush").addEventListener("click", () => enablePushAlerts().catch((error) => toast(error.message)));
 $("#disablePush").addEventListener("click", () => disablePushAlerts().catch((error) => toast(error.message)));

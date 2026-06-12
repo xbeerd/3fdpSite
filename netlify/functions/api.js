@@ -395,7 +395,7 @@ async function sendSubRequestNotifications(data, request, eventItem) {
   const payload = JSON.stringify({
     title: "3FDP sub needed",
     body: `${request.requestedBy} needs a sub${eventItem?.date ? ` on ${eventItem.date}` : ""}${eventItem?.opponent ? ` vs ${eventItem.opponent}` : ""}.`,
-    url: "/#calendar",
+    url: "/#home",
     tag: `sub-request-${request.id}`
   });
   const expired = new Set();

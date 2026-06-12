@@ -16,6 +16,7 @@ self.addEventListener("notificationclick", (event) => {
   event.waitUntil(clients.matchAll({ type: "window", includeUncontrolled: true }).then((clientList) => {
     const existing = clientList.find((client) => client.url.includes(self.location.origin));
     if (existing) {
+      existing.postMessage({ type: "notification-click", url });
       existing.focus();
       return existing.navigate(url);
     }

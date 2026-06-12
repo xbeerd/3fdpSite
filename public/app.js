@@ -480,7 +480,7 @@ function calculatePersonalProgress() {
   const first = state.weights[0];
   const latest = state.weights[state.weights.length - 1];
   if (!first || !latest || first.weight <= 0) return null;
-  return ((first.weight - latest.weight) / first.weight) * 100;
+  return ((latest.weight - first.weight) / first.weight) * 100;
 }
 
 function renderWeights() {
@@ -510,7 +510,7 @@ function renderBoard() {
   $("#boardModeControls [data-board-mode='personal']").classList.toggle("is-active", isPersonal);
   $("#personalRangeForm").classList.toggle("hidden", !isPersonal);
   $("#boardEyebrow").textContent = isPersonal ? "Personal Board" : "Main Board";
-  $("#boardTitle").textContent = isPersonal ? "Your percent change" : "Percentage weight loss";
+  $("#boardTitle").textContent = isPersonal ? "Your percent change" : "Percentage change";
   $("#boardSubtitle").textContent = isPersonal
     ? "Only you can see your personal board."
     : (state.schedule.activeContest ? `Week-to-week: ${boardRangeLabel()}` : "Contest date range only.");
@@ -519,7 +519,7 @@ function renderBoard() {
     renderPersonalBoard();
     return;
   }
-  $("#boardHead").innerHTML = `<tr><th>Rank</th><th>User</th><th>% Lost</th><th>Through</th></tr>`;
+  $("#boardHead").innerHTML = `<tr><th>Rank</th><th>User</th><th>% Change</th><th>Through</th></tr>`;
   $("#leaderboard").innerHTML = state.leaderboard.length
     ? state.leaderboard.map((row, index) => `
       <tr>
@@ -549,7 +549,7 @@ function personalPoints(weights) {
     label: entry.entryDate || entry.date,
     date: entry.entryDate || entry.date,
     weight: entry.weight,
-    percentLost: Number((((first.weight - entry.weight) / first.weight) * 100).toFixed(2))
+    percentLost: Number((((entry.weight - first.weight) / first.weight) * 100).toFixed(2))
   }));
 }
 

@@ -280,7 +280,7 @@ function calculateContestProgress(data, userId, fromWeek = 0, toWeek = null) {
   return {
     fromWeek: from.week,
     toWeek: endEntry.week,
-    percentLost: Number((((start.weight - end.weight) / start.weight) * 100).toFixed(2)),
+    percentLost: Number((((end.weight - start.weight) / start.weight) * 100).toFixed(2)),
     date: endEntry.date
   };
 }
@@ -300,7 +300,7 @@ function contestGraph(data, fromWeek = 0, toWeek = null) {
         .map(({ checkpoint, weight }) => ({
           week: checkpoint.week,
           date: checkpoint.date,
-          percentLost: Number((((baseline.weight - weight.weight) / baseline.weight) * 100).toFixed(2))
+          percentLost: Number((((weight.weight - baseline.weight) / baseline.weight) * 100).toFixed(2))
         }))
       : [];
     return { user: { id: user.id, username: user.username }, points };
@@ -847,7 +847,7 @@ exports.handler = async (event) => {
         leaderboard: data.users.map((user) => ({
           user: { id: user.id, username: user.username },
           progress: calculateContestProgress(data, user.id, fromWeek, toWeek)
-        })).sort((a, b) => (b.progress?.percentLost ?? -Infinity) - (a.progress?.percentLost ?? -Infinity)),
+        })).sort((a, b) => (a.progress?.percentLost ?? Infinity) - (b.progress?.percentLost ?? Infinity)),
         graphSeries: contestGraph(data, fromWeek, toWeek)
       });
     }

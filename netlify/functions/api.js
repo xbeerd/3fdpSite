@@ -354,6 +354,12 @@ function eventDuplicateKey(row) {
   ].map((value) => String(value || "").trim().toLowerCase()).join("|");
 }
 
+function formatDisplayDate(value) {
+  const text = String(value || "");
+  const match = text.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  return match ? `${match[2]}-${match[3]}-${match[1]}` : text;
+}
+
 function normalizedCalendarRow(row, data) {
   return {
     date: row.date,
@@ -394,7 +400,7 @@ async function sendSubRequestNotifications(data, request, eventItem) {
   if (!pushConfigured() || !data.pushSubscriptions.length) return;
   const payload = JSON.stringify({
     title: "3FDP sub needed",
-    body: `${request.requestedBy} needs a sub${eventItem?.date ? ` on ${eventItem.date}` : ""}${eventItem?.opponent ? ` vs ${eventItem.opponent}` : ""}.`,
+    body: `${request.requestedBy} needs a sub${eventItem?.date ? ` on ${formatDisplayDate(eventItem.date)}` : ""}${eventItem?.opponent ? ` vs ${eventItem.opponent}` : ""}.`,
     url: "/#home",
     tag: `sub-request-${request.id}`
   });

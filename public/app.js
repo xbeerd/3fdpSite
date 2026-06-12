@@ -135,6 +135,21 @@ function formatPercent(value) {
   return value === null || value === undefined ? "Waiting" : `${Number(value).toFixed(2)}%`;
 }
 
+function formatDate(value) {
+  const text = String(value || "");
+  const match = text.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  return match ? `${match[2]}-${match[3]}-${match[1]}` : text;
+}
+
+function formatDateTime(value) {
+  if (!value) return "";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return formatDate(value);
+  const day = `${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}-${date.getFullYear()}`;
+  const time = date.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
+  return `${day} ${time}`;
+}
+
 function todayYmd() {
   return new Date().toISOString().slice(0, 10);
 }
@@ -325,7 +340,7 @@ function renderHome() {
     ? state.subRequests.map((request) => `
       <article class="summary-item">
         <strong>Sub needed:</strong> ${escapeHtml(request.event?.title || "Bowling")}
-        <span>${escapeHtml(request.event?.date || "")}</span>
+        <span>${escapeHtml(formatDate(request.event?.date || ""))}</span>
         <button class="small ghost" type="button" data-open-sub-event="${request.eventId}">View on calendar</button>
       </article>
     `).join("")
@@ -351,7 +366,7 @@ function renderNote(note) {
       <article class="comment-item">
         <strong>${escapeHtml(comment.username)}</strong>
         <p>${escapeHtml(comment.text)}</p>
-        <span>${new Date(comment.createdAt).toLocaleString()}</span>
+        <span>${formatDateTime(comment.createdAt)}</span>
       </article>
     `).join("")
     : `<p class="hint">No replies yet.</p>`;
@@ -361,7 +376,7 @@ function renderNote(note) {
       <div class="feed-heading">
         <div>
           <strong>${escapeHtml(note.username)}</strong>
-          <span>${new Date(note.createdAt).toLocaleString()}${note.updatedAt ? " - edited" : ""}</span>
+          <span>${formatDateTime(note.createdAt)}${note.updatedAt ? " - edited" : ""}</span>
         </div>
         ${adminControls}
       </div>
@@ -403,7 +418,7 @@ function renderSelectedCalendarEvent() {
       <div>
         <p class="eyebrow">Selected event</p>
         <h3>${escapeHtml(eventItem.title || "Bowling")}</h3>
-        <p>${escapeHtml(eventItem.date)} - practice ${escapeHtml(eventItem.practiceTime || "")}</p>
+        <p>${escapeHtml(formatDate(eventItem.date))} - practice ${escapeHtml(eventItem.practiceTime || "")}</p>
         <p>Start ${escapeHtml(eventItem.startTime || "")} - Lane ${escapeHtml(eventItem.lane || "TBD")} - ${escapeHtml(eventItem.opponent || "Opponent TBD")}</p>
         ${eventItem.location ? `<p>Location: ${escapeHtml(eventItem.location)}</p>` : ""}
       </div>
@@ -483,7 +498,7 @@ function renderSubRequest(request) {
 
 function renderContestHeader() {
   $("#contestWindow").textContent = state.config.contestStartDate && state.config.contestEndDate
-    ? `${state.config.contestStartDate} to ${state.config.contestEndDate}`
+    ? `${formatDate(state.config.contestStartDate)} to ${formatDate(state.config.contestEndDate)}`
     : "Not configured";
   $("#contestStatus").textContent = state.schedule.activeContest
     ? "Contest active. Latest entry by Thursday 6pm Central counts for each week."
@@ -507,9 +522,9 @@ function renderWeights() {
   $("#myWeights").innerHTML = visible.length
     ? visible.map((entry) => `
       <tr>
-        <td>${escapeHtml(entry.entryDate || entry.date)}</td>
+        <td>${escapeHtml(formatDate(entry.entryDate || entry.date))}</td>
         <td>${escapeHtml(entry.weight)}</td>
-        <td>${new Date(entry.createdAt).toLocaleString()}</td>
+        <td>${formatDateTime(entry.createdAt)}</td>
         <td class="row-actions">
           <button class="small ghost" type="button" data-edit-weight="${entry.id}">Edit</button>
           <button class="small danger" type="button" data-delete-weight="${entry.id}">Delete</button>
@@ -544,7 +559,7 @@ function renderBoard() {
         <td>${index + 1}</td>
         <td>${escapeHtml(row.user.username)}</td>
         <td>${formatPercent(row.progress?.percentLost)}</td>
-        <td>${escapeHtml(row.progress?.date || "Waiting")}</td>
+        <td>${row.progress?.date ? escapeHtml(formatDate(row.progress.date)) : "Waiting"}</td>
       </tr>
     `).join("")
     : `<tr><td colspan="4" class="empty">No contest data yet.</td></tr>`;
@@ -564,7 +579,7 @@ function personalPoints(weights) {
   if (!first || first.weight <= 0) return [];
   return weights.map((entry, index) => ({
     week: index,
-    label: entry.entryDate || entry.date,
+    label: formatDate(entry.entryDate || entry.date),
     date: entry.entryDate || entry.date,
     weight: entry.weight,
     percentLost: Number((((entry.weight - first.weight) / first.weight) * 100).toFixed(2))
@@ -578,10 +593,10 @@ function renderPersonalBoard() {
   $("#leaderboard").innerHTML = points.length
     ? points.map((point, index) => `
       <tr>
-        <td>${escapeHtml(point.date)}</td>
+        <td>${escapeHtml(formatDate(point.date))}</td>
         <td>${escapeHtml(point.weight)}</td>
         <td>${formatPercent(point.percentLost)}</td>
-        <td>${new Date(weights[index].createdAt).toLocaleString()}</td>
+        <td>${formatDateTime(weights[index].createdAt)}</td>
       </tr>
     `).join("")
     : `<tr><td colspan="4" class="empty">No personal entries in this range.</td></tr>`;
@@ -623,7 +638,7 @@ function renderGraph(series) {
   const lines = active.map((row, index) => {
     const color = colors[index % colors.length];
     const points = row.points.map((point) => `${x(point.week)},${y(point.percentLost)}`).join(" ");
-    const dots = row.points.map((point) => `<circle cx="${x(point.week)}" cy="${y(point.percentLost)}" r="5" fill="${color}"><title>${escapeHtml(row.user.username)} ${escapeHtml(point.date || point.label || weekLabel(point.week))}: ${formatPercent(point.percentLost)}</title></circle>`).join("");
+    const dots = row.points.map((point) => `<circle cx="${x(point.week)}" cy="${y(point.percentLost)}" r="5" fill="${color}"><title>${escapeHtml(row.user.username)} ${escapeHtml(formatDate(point.date) || point.label || weekLabel(point.week))}: ${formatPercent(point.percentLost)}</title></circle>`).join("");
     return `<polyline points="${points}" fill="none" stroke="${color}" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"></polyline>${dots}`;
   }).join("");
   const legend = active.map((row, index) => `<span class="legend-item"><span class="legend-dot" style="background:${colors[index % colors.length]}"></span>${escapeHtml(row.user.username)} <strong>${formatPercent(row.points.at(-1).percentLost)}</strong></span>`).join("");
@@ -930,7 +945,7 @@ $("#calendarList").addEventListener("click", async (event) => {
   try {
     if (icsButton) {
       const eventItem = state.events.find((item) => item.id === icsButton.dataset.ics);
-      if (eventItem) downloadText(`${eventItem.date}-bowling.ics`, eventsToIcs([eventItem]));
+      if (eventItem) downloadText(`${formatDate(eventItem.date)}-bowling.ics`, eventsToIcs([eventItem]));
     }
     if (deleteEventButton && confirm("Remove this calendar event and any related sub requests?")) {
       const data = await api(`/api/calendar/events/${deleteEventButton.dataset.deleteEvent}`, { method: "DELETE" });

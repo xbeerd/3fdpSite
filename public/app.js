@@ -884,12 +884,14 @@ $("#calendarList").addEventListener("click", async (event) => {
   const deleteEventButton = event.target.closest("[data-delete-event]");
   const editSubButton = event.target.closest("[data-edit-sub-request]");
   const deleteSubButton = event.target.closest("[data-delete-sub-request]");
-  if (icsButton) {
-    const eventItem = state.events.find((item) => item.id === icsButton.dataset.ics);
-    if (eventItem) downloadText(`${eventItem.date}-bowling.ics`, eventsToIcs([eventItem]));
-  }
-  if (deleteEventButton && confirm("Remove this calendar event and any related sub requests?")) {
-    try {
+  const actionButton = subButton || responseButton || editSubButton || deleteSubButton;
+  if (actionButton) actionButton.disabled = true;
+  try {
+    if (icsButton) {
+      const eventItem = state.events.find((item) => item.id === icsButton.dataset.ics);
+      if (eventItem) downloadText(`${eventItem.date}-bowling.ics`, eventsToIcs([eventItem]));
+    }
+    if (deleteEventButton && confirm("Remove this calendar event and any related sub requests?")) {
       const data = await api(`/api/calendar/events/${deleteEventButton.dataset.deleteEvent}`, { method: "DELETE" });
       state.events = data.events;
       state.subRequests = data.subRequests;
@@ -897,56 +899,51 @@ $("#calendarList").addEventListener("click", async (event) => {
       renderHome();
       renderCalendar();
       toast(`${data.removedCount || 1} calendar event${data.removedCount === 1 ? "" : "s"} removed.`);
-    } catch (error) {
-      toast(error.message);
+      return;
     }
-  }
-  if (subButton) {
-    const note = prompt("Anything people should know?");
-    try {
+    if (subButton) {
+      const note = prompt("Anything people should know?");
       const data = await api("/api/sub-requests", { method: "POST", body: JSON.stringify({ eventId: subButton.dataset.subRequest, note }) });
       state.subRequests = data.subRequests;
       renderHome();
       renderCalendar();
-    } catch (error) {
-      toast(error.message);
+      return;
     }
-  }
-  if (responseButton) {
-    try {
+    if (responseButton) {
       const data = await api(`/api/sub-requests/${responseButton.dataset.subResponse}/respond`, { method: "POST", body: JSON.stringify({ response: responseButton.dataset.response }) });
       state.subRequests = data.subRequests;
       renderHome();
       renderCalendar();
-    } catch (error) {
-      toast(error.message);
+      return;
     }
-  }
-  if (editSubButton) {
-    const request = state.subRequests.find((item) => item.id === editSubButton.dataset.editSubRequest);
-    if (!request) return;
-    const note = prompt("Edit sub request note:", request.note || "");
-    if (note === null) return;
-    try {
+    if (editSubButton) {
+      const request = state.subRequests.find((item) => item.id === editSubButton.dataset.editSubRequest);
+      if (!request) return;
+      const note = prompt("Edit sub request note:", request.note || "");
+      if (note === null) return;
       const data = await api(`/api/sub-requests/${editSubButton.dataset.editSubRequest}`, { method: "PUT", body: JSON.stringify({ note }) });
       state.subRequests = data.subRequests;
       renderHome();
       renderCalendar();
       toast("Sub request updated.");
-    } catch (error) {
-      toast(error.message);
+      return;
     }
-  }
-  if (deleteSubButton && confirm("Cancel this sub request?")) {
-    try {
+    if (deleteSubButton && confirm("Cancel this sub request?")) {
+      const request = state.subRequests.find((item) => item.id === deleteSubButton.dataset.deleteSubRequest);
       const data = await api(`/api/sub-requests/${deleteSubButton.dataset.deleteSubRequest}`, { method: "DELETE" });
+      if (request) state.subRequests = state.subRequests.filter((item) => item.eventId !== request.eventId);
+      else state.subRequests = state.subRequests.filter((item) => item.id !== deleteSubButton.dataset.deleteSubRequest);
+      renderHome();
+      renderCalendar();
       state.subRequests = data.subRequests;
       renderHome();
       renderCalendar();
-      toast("Sub request canceled.");
-    } catch (error) {
-      toast(error.message);
+      toast(`${data.removedCount || 1} sub request${data.removedCount === 1 ? "" : "s"} canceled.`);
     }
+  } catch (error) {
+    toast(error.message);
+  } finally {
+    if (actionButton?.isConnected) actionButton.disabled = false;
   }
 });
 

@@ -721,6 +721,16 @@ exports.handler = async (event) => {
       const eventId = String(body.eventId || "");
       const eventItem = data.calendarEvents.find((candidate) => candidate.id === eventId);
       if (!eventItem) return json(404, { error: "Calendar event not found." });
+      const existing = data.subRequests.find((candidate) => candidate.eventId === eventId);
+      if (existing) {
+        existing.requestedByUserId = user.id;
+        existing.requestedBy = user.username;
+        existing.note = String(body.note || "");
+        existing.status = "open";
+        existing.updatedAt = new Date().toISOString();
+        await saveData(data);
+        return json(200, { subRequests: visibleSubRequests(data) });
+      }
       const request = {
         id: crypto.randomUUID(),
         eventId,
@@ -765,9 +775,11 @@ exports.handler = async (event) => {
       const request = findSubRequest(data, requestId);
       if (!request) return json(404, { error: "Sub request not found." });
       if (request.requestedByUserId !== user.id && user.role !== "admin") return json(403, { error: "Only the request owner or admin can remove this sub request." });
-      data.subRequests = data.subRequests.filter((candidate) => candidate.id !== requestId);
+      const eventId = request.eventId;
+      const beforeCount = data.subRequests.length;
+      data.subRequests = data.subRequests.filter((candidate) => candidate.eventId !== eventId);
       await saveData(data);
-      return json(200, { subRequests: visibleSubRequests(data) });
+      return json(200, { subRequests: visibleSubRequests(data), removedCount: beforeCount - data.subRequests.length });
     }
 
     if (method === "GET" && route === "/weights") {

@@ -729,6 +729,7 @@ exports.handler = async (event) => {
         existing.status = "open";
         existing.updatedAt = new Date().toISOString();
         await saveData(data);
+        await sendSubRequestNotifications(data, existing, eventItem);
         return json(200, { subRequests: visibleSubRequests(data) });
       }
       const request = {

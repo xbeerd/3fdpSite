@@ -1314,7 +1314,7 @@ $("#quickEventForm").addEventListener("submit", async (event) => {
   const form = event.currentTarget;
   try {
     const payload = Object.fromEntries(new FormData(form));
-    payload.title = payload.opponent ? `Bowling vs ${payload.opponent}` : "Test bowling night";
+    payload.title = String(payload.title || "").trim() || (payload.opponent ? `Bowling vs ${payload.opponent}` : "Bowling");
     const data = await api("/api/calendar/events", { method: "POST", body: JSON.stringify(payload) });
     state.events = data.events;
     state.selectedCalendarEventId = [...state.events].sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)))[0]?.id || state.selectedCalendarEventId;

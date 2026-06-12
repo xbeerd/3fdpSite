@@ -1060,9 +1060,12 @@ $("#myWeights").addEventListener("click", async (event) => {
   const editButton = event.target.closest("[data-edit-weight]");
   const deleteButton = event.target.closest("[data-delete-weight]");
   if (!editButton && !deleteButton) return;
+  const actionButton = editButton || deleteButton;
   const weightId = (editButton || deleteButton).dataset.editWeight || (editButton || deleteButton).dataset.deleteWeight;
   const entry = state.weights.find((item) => item.id === weightId);
   if (!entry) return toast("Weight entry not found.");
+  const previousWeights = [...state.weights];
+  actionButton.disabled = true;
   try {
     if (editButton) {
       const date = prompt("Entry date:", entry.entryDate || entry.date || todayYmd());
@@ -1078,8 +1081,12 @@ $("#myWeights").addEventListener("click", async (event) => {
       toast("Weight entry updated.");
     }
     if (deleteButton && confirm("Delete this weight entry?")) {
+      state.weights = state.weights.filter((item) => item.id !== weightId);
+      renderContestHeader();
+      renderWeights();
+      renderBoard();
       const data = await api(`/api/weights/${weightId}`, { method: "DELETE" });
-      state.weights = data.weights;
+      state.weights = data.weights.filter((item) => item.id !== weightId);
       renderContestHeader();
       renderWeights();
       renderBoard();
@@ -1087,7 +1094,15 @@ $("#myWeights").addEventListener("click", async (event) => {
       toast("Weight entry deleted.");
     }
   } catch (error) {
+    if (deleteButton) {
+      state.weights = previousWeights;
+      renderContestHeader();
+      renderWeights();
+      renderBoard();
+    }
     toast(error.message);
+  } finally {
+    if (actionButton.isConnected) actionButton.disabled = false;
   }
 });
 

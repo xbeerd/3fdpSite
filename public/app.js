@@ -708,6 +708,7 @@ function renderGraph(series) {
 
 function renderScorePhotoPreview() {
   const preview = $("#scorePhotoPreview");
+  const scanButton = $("#scanScorePhoto");
   if (!preview) return;
   preview.classList.toggle("hidden", !state.scorePhotoDataUrl);
   preview.innerHTML = state.scorePhotoDataUrl
@@ -716,6 +717,7 @@ function renderScorePhotoPreview() {
       <button class="small danger" type="button" data-clear-score-photo>Remove photo</button>
     `
     : "";
+  if (scanButton) scanButton.disabled = !state.scorePhotoDataUrl;
 }
 
 function resizeScorePhoto(file) {
@@ -765,6 +767,10 @@ function setScoreFormLines(ourLines = [], opponentLines = []) {
   const opponent = opponentLines.length ? opponentLines : Array.from({ length: 5 }, () => blankScoreLine(false));
   $("#ourScoreLines").innerHTML = our.map((line, index) => scoreLineFields(line, "our", index)).join("");
   $("#opponentScoreLines").innerHTML = opponent.map((line, index) => scoreLineFields(line, "opponent", index)).join("");
+}
+
+function mergeScannedLines(existing, scanned) {
+  return scanned.length ? scanned : existing;
 }
 
 function showScoreForm(recap = null) {
@@ -1459,15 +1465,45 @@ $("#scoreRecapForm").addEventListener("change", (event) => {
   if (paid && !checkbox.checked && !paid.checked) paid.checked = true;
 });
 
+$("#scanScorePhoto").addEventListener("click", async () => {
+  if (!state.scorePhotoDataUrl) return toast("Upload a recap photo first.");
+  const button = $("#scanScorePhoto");
+  button.disabled = true;
+  const originalText = button.textContent;
+  button.textContent = "Scanning...";
+  try {
+    const existingOur = readScoreLines("our");
+    const existingOpponent = readScoreLines("opponent");
+    const data = await api("/api/scores/scan", { method: "POST", body: JSON.stringify({ photoDataUrl: state.scorePhotoDataUrl }) });
+    if (data.ourTeamName) $("#scoreRecapForm").elements.ourTeamName.value = data.ourTeamName;
+    if (data.opponentTeamName) $("#scoreRecapForm").elements.opponentTeamName.value = data.opponentTeamName;
+    setScoreFormLines(
+      mergeScannedLines(existingOur, data.ourTeamLines || []),
+      mergeScannedLines(existingOpponent, data.opponentLines || [])
+    );
+    const warningText = data.warnings?.length ? ` ${data.warnings.join(" ")}` : "";
+    toast(`Photo scanned. Review the scores before saving.${warningText}`);
+  } catch (error) {
+    toast(error.message);
+  } finally {
+    button.textContent = originalText;
+    button.disabled = !state.scorePhotoDataUrl;
+  }
+});
+
 $("#scoreRecapForm").addEventListener("submit", async (event) => {
   event.preventDefault();
   const form = event.currentTarget;
   const submit = form.querySelector("button[type='submit']");
   if (submit) submit.disabled = true;
   try {
+    const payload = scoreFormPayload(form);
+    if (!payload.ourTeamLines.length && state.scorePhotoDataUrl) {
+      throw new Error("Scan the recap photo first, or manually add at least one 3FDP bowler row.");
+    }
     const method = state.editingScoreRecapId ? "PUT" : "POST";
     const path = state.editingScoreRecapId ? `/api/scores/recaps/${state.editingScoreRecapId}` : "/api/scores/recaps";
-    const data = await api(path, { method, body: JSON.stringify(scoreFormPayload(form)) });
+    const data = await api(path, { method, body: JSON.stringify(payload) });
     state.scoreRecaps = data.recaps;
     state.bowlerStats = data.bowlers;
     hideScoreForm();

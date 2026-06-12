@@ -10,6 +10,8 @@ const DEFAULT_TEMP_PASSWORD = "changeme123";
 const VAPID_PUBLIC_KEY = process.env.VAPID_PUBLIC_KEY || "";
 const VAPID_PRIVATE_KEY = process.env.VAPID_PRIVATE_KEY || "";
 const VAPID_SUBJECT = process.env.VAPID_SUBJECT || "mailto:admin@3fdp.local";
+const OPENAI_API_KEY = process.env.OPENAI_API_KEY || "";
+const OPENAI_SCORE_MODEL = process.env.OPENAI_SCORE_MODEL || "gpt-4o-mini";
 
 if (VAPID_PUBLIC_KEY && VAPID_PRIVATE_KEY) {
   webPush.setVapidDetails(VAPID_SUBJECT, VAPID_PUBLIC_KEY, VAPID_PRIVATE_KEY);
@@ -393,6 +395,10 @@ function normalizeScorePhoto(value) {
   return text;
 }
 
+function scoreScanConfigured() {
+  return Boolean(OPENAI_API_KEY);
+}
+
 function normalizeBoolean(value, fallback = false) {
   if (value === undefined || value === null || value === "") return fallback;
   if (typeof value === "boolean") return value;
@@ -516,6 +522,89 @@ function scoreDashboard(data, user = null) {
     };
   }).sort((a, b) => (b.teamType === "our") - (a.teamType === "our") || String(a.bowlerName).localeCompare(String(b.bowlerName)));
   return { recaps: recaps.map((recap) => publicScoreRecap(recap, user)), bowlers };
+}
+
+function extractResponseText(response) {
+  if (typeof response.output_text === "string") return response.output_text;
+  return (response.output || [])
+    .flatMap((item) => item.content || [])
+    .map((content) => content.text || "")
+    .filter(Boolean)
+    .join("\n");
+}
+
+function parseScoreScanJson(text) {
+  const raw = String(text || "").trim().replace(/^```(?:json)?/i, "").replace(/```$/i, "").trim();
+  const firstBrace = raw.indexOf("{");
+  const lastBrace = raw.lastIndexOf("}");
+  const cleaned = firstBrace >= 0 && lastBrace > firstBrace ? raw.slice(firstBrace, lastBrace + 1) : raw;
+  return JSON.parse(cleaned);
+}
+
+function normalizeScannedLine(line = {}) {
+  const normalized = normalizeScoreLine({
+    bowlerName: line.bowlerName || line.name,
+    game1: line.game1 || line.first || line["1st"],
+    game2: line.game2 || line.second || line["2nd"],
+    game3: line.game3 || line.third || line["3rd"],
+    isSub: line.isSub || false,
+    paid: line.paid
+  });
+  if (!normalized) return null;
+  delete normalized.id;
+  delete normalized.handicapOverride;
+  return normalized;
+}
+
+async function scanScorePhoto(photoDataUrl) {
+  if (!scoreScanConfigured()) {
+    throw Object.assign(new Error("Score photo scanning is not configured yet. Add OPENAI_API_KEY in Netlify to enable it."), { statusCode: 503 });
+  }
+  const imageUrl = normalizeScorePhoto(photoDataUrl);
+  if (!imageUrl) throw Object.assign(new Error("Upload a recap photo before scanning."), { statusCode: 400 });
+  const response = await fetch("https://api.openai.com/v1/responses", {
+    method: "POST",
+    headers: {
+      "Authorization": `Bearer ${OPENAI_API_KEY}`,
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({
+      model: OPENAI_SCORE_MODEL,
+      input: [{
+        role: "user",
+        content: [
+          {
+            type: "input_text",
+            text: [
+              "Read this bowling recap screen and return only valid JSON.",
+              "Extract both teams if visible. If only one team is visible, put it in ourTeamLines if it appears to be 3 Finger Death Punch / 3 Finger Dea / 3 FDP, otherwise use opponentLines.",
+              "Do not include totals rows, pins rows, handicap rows, or game totals.",
+              "Use this shape exactly: {\"ourTeamName\":\"\",\"opponentTeamName\":\"\",\"ourTeamLines\":[{\"bowlerName\":\"\",\"game1\":0,\"game2\":0,\"game3\":0}],\"opponentLines\":[{\"bowlerName\":\"\",\"game1\":0,\"game2\":0,\"game3\":0}],\"warnings\":[]}.",
+              "If uncertain about a digit or name, still give your best guess and add a warning."
+            ].join(" ")
+          },
+          { type: "input_image", image_url: imageUrl }
+        ]
+      }]
+    })
+  });
+  const result = await response.json();
+  if (!response.ok) {
+    throw Object.assign(new Error(result.error?.message || "Score photo scan failed."), { statusCode: response.status });
+  }
+  let parsed;
+  try {
+    parsed = parseScoreScanJson(extractResponseText(result));
+  } catch {
+    throw Object.assign(new Error("The scan did not return readable score data. Try a clearer photo."), { statusCode: 502 });
+  }
+  return {
+    ourTeamName: String(parsed.ourTeamName || "").trim(),
+    opponentTeamName: String(parsed.opponentTeamName || "").trim(),
+    ourTeamLines: (Array.isArray(parsed.ourTeamLines) ? parsed.ourTeamLines : []).map(normalizeScannedLine).filter(Boolean),
+    opponentLines: (Array.isArray(parsed.opponentLines) ? parsed.opponentLines : []).map(normalizeScannedLine).filter(Boolean),
+    warnings: Array.isArray(parsed.warnings) ? parsed.warnings.map((warning) => String(warning)).filter(Boolean).slice(0, 5) : []
+  };
 }
 
 function pushConfigured() {
@@ -992,6 +1081,12 @@ exports.handler = async (event) => {
     if (method === "GET" && route === "/scores/dashboard") {
       const user = requireUser(event, data);
       return json(200, scoreDashboard(data, user));
+    }
+
+    if (method === "POST" && route === "/scores/scan") {
+      requireUser(event, data);
+      const scan = await scanScorePhoto(parseBody(event).photoDataUrl);
+      return json(200, scan);
     }
 
     if (method === "POST" && route === "/scores/recaps") {

@@ -60,6 +60,20 @@ VAPID_SUBJECT
 
 `VAPID_SUBJECT` should be a contact URI such as `mailto:you@example.com`.
 
+## Score Recap Scanning
+
+Recap photo scanning uses OpenAI vision from the Netlify function. Set this Netlify environment variable before using **Scan photo**:
+
+```text
+OPENAI_API_KEY
+```
+
+Optional model override:
+
+```text
+OPENAI_SCORE_MODEL
+```
+
 ## Schedule CSV
 
 Supported headers:

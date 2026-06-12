@@ -95,6 +95,7 @@ function setView(view) {
   const active = $(`#${state.view}View`);
   if (active) active.classList.remove("hidden");
   $("#menu").classList.add("hidden");
+  if (state.view === "login") showRegisterForm(false);
 }
 
 function showCalendarEvent(eventId) {
@@ -128,6 +129,12 @@ function renderShell() {
   if (!state.user) setView("login");
   else if (needsSetup) setView("passwordSetup");
   else setView(state.view === "login" || state.view === "passwordSetup" ? "home" : state.view);
+}
+
+function showRegisterForm(show) {
+  $("#loginForm").classList.toggle("hidden", show);
+  $("#showRegister").classList.toggle("hidden", show);
+  $("#registerForm").classList.toggle("hidden", !show);
 }
 
 async function logout() {
@@ -820,6 +827,8 @@ async function init() {
 
 $("#menuBtn").addEventListener("click", () => $("#menu").classList.toggle("hidden"));
 $$("[data-view]").forEach((button) => button.addEventListener("click", () => setView(button.dataset.view)));
+$("#showRegister").addEventListener("click", () => showRegisterForm(true));
+$("#showLogin").addEventListener("click", () => showRegisterForm(false));
 $("#menuAuthBtn").addEventListener("click", async () => {
   if (state.user) await logout();
   else setView("login");
@@ -871,6 +880,7 @@ $("#registerForm").addEventListener("submit", async (event) => {
     state.view = "home";
     await refreshBootstrap();
     renderShell();
+    showRegisterForm(false);
     toast("Account created.");
     if (enableSubAlerts) await enablePushAlerts();
   } catch (error) {

@@ -36,7 +36,8 @@
           <label>Password <input name="password" type="password" autocomplete="current-password"></label>
           <button type="submit">Log in</button>
         </form>
-        <form id="registerForm" class="form">
+        <button id="showRegister" class="ghost" type="button">New user</button>
+        <form id="registerForm" class="form hidden">
           <p class="eyebrow">New teammate</p>
           <p class="hint">After signing up, open Options and enable Sub Alerts so you get notified when someone needs a sub.</p>
           <label>Email <input name="email" type="email" required></label>
@@ -44,7 +45,10 @@
           <label>Password <input name="password" type="password" minlength="8" required></label>
           <label class="check-row"><input name="enableSubAlerts" type="checkbox"> Enable Sub Alerts after signup</label>
           <label id="adminSetupCodeField" class="hidden">Admin setup code <input name="setupCode" type="text" placeholder="Only needed for first admin setup"></label>
-          <button type="submit">Create account</button>
+          <div class="row-actions">
+            <button type="submit">Create account</button>
+            <button id="showLogin" class="ghost" type="button">Back to login</button>
+          </div>
         </form>
       </section>
 

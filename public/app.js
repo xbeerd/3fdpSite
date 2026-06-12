@@ -191,13 +191,17 @@ async function refreshWeightsAndBoard() {
   const weights = await api("/api/weights");
   state.weights = weights.weights;
   state.schedule = weights.schedule;
+  await refreshBoardOnly();
+  renderWeights();
+}
+
+async function refreshBoardOnly() {
   const { fromWeek, toWeek } = mainBoardRangeParams();
   const dashboard = await api(`/api/biggest-loser/dashboard?fromWeek=${fromWeek}&toWeek=${toWeek}`);
   state.leaderboard = dashboard.leaderboard;
   state.graphSeries = dashboard.graphSeries;
   state.schedule = dashboard.schedule;
   renderContestHeader();
-  renderWeights();
   renderBoard();
 }
 
@@ -899,7 +903,10 @@ $("#weightForm").addEventListener("submit", async (event) => {
     const data = await api("/api/weights", { method: "POST", body: JSON.stringify(payload) });
     state.weights = data.weights;
     form.reset();
-    await refreshWeightsAndBoard();
+    renderContestHeader();
+    renderWeights();
+    renderBoard();
+    await refreshBoardOnly();
     toast("Weight saved.");
   } catch (error) {
     toast(error.message);
@@ -921,13 +928,19 @@ $("#myWeights").addEventListener("click", async (event) => {
       if (!weight) return;
       const data = await api(`/api/weights/${weightId}`, { method: "PUT", body: JSON.stringify({ date, weight }) });
       state.weights = data.weights;
-      await refreshWeightsAndBoard();
+      renderContestHeader();
+      renderWeights();
+      renderBoard();
+      await refreshBoardOnly();
       toast("Weight entry updated.");
     }
     if (deleteButton && confirm("Delete this weight entry?")) {
       const data = await api(`/api/weights/${weightId}`, { method: "DELETE" });
       state.weights = data.weights;
-      await refreshWeightsAndBoard();
+      renderContestHeader();
+      renderWeights();
+      renderBoard();
+      await refreshBoardOnly();
       toast("Weight entry deleted.");
     }
   } catch (error) {

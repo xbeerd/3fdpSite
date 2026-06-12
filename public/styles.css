@@ -519,6 +519,27 @@ th { color: var(--muted); font-size: 0.76rem; text-transform: uppercase; }
   gap: 1rem;
 }
 
+.score-photo-preview {
+  display: grid;
+  gap: 0.55rem;
+  justify-items: start;
+  padding: 0.7rem;
+  background: #f7f7f7;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+
+.score-photo-preview img,
+.score-photo {
+  display: block;
+  width: 100%;
+  max-height: 520px;
+  object-fit: contain;
+  background: #111111;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+
 .score-recap,
 .score-card {
   min-width: 0;

@@ -381,6 +381,18 @@ function normalizeScoreValue(value) {
   return Number.isInteger(score) && score >= 0 && score <= 300 ? score : null;
 }
 
+function normalizeScorePhoto(value) {
+  const text = String(value || "").trim();
+  if (!text) return "";
+  if (!/^data:image\/(?:jpeg|jpg|png|webp);base64,[A-Za-z0-9+/=]+$/.test(text)) {
+    throw Object.assign(new Error("Recap photo must be a valid image."), { statusCode: 400 });
+  }
+  if (text.length > 1_500_000) {
+    throw Object.assign(new Error("Recap photo is too large. Try a smaller image."), { statusCode: 400 });
+  }
+  return text;
+}
+
 function normalizeBoolean(value, fallback = false) {
   if (value === undefined || value === null || value === "") return fallback;
   if (typeof value === "boolean") return value;
@@ -417,7 +429,7 @@ function normalizeScoreLine(line = {}) {
   };
 }
 
-function normalizeScoreRecap(body, existing = {}) {
+function normalizeScoreRecap(body, existing = {}, options = {}) {
   const date = String(body.date || "").trim();
   if (!ymdToDateParts(date)) throw Object.assign(new Error("Enter a valid recap date."), { statusCode: 400 });
   const ourTeamLines = (Array.isArray(body.ourTeamLines) ? body.ourTeamLines : []).map(normalizeScoreLine).filter(Boolean);
@@ -431,7 +443,8 @@ function normalizeScoreRecap(body, existing = {}) {
     opponentTeamName: String(body.opponentTeamName || "").trim(),
     ourTeamLines,
     opponentLines,
-    notes: String(body.notes || "").trim()
+    notes: options.canEditAdminNote ? String(body.notes || "").trim() : (existing.notes || ""),
+    photoDataUrl: normalizeScorePhoto(body.photoDataUrl)
   };
 }
 
@@ -982,8 +995,8 @@ exports.handler = async (event) => {
     }
 
     if (method === "POST" && route === "/scores/recaps") {
-      const user = requireAdmin(event, data);
-      const recap = normalizeScoreRecap(parseBody(event));
+      const user = requireUser(event, data);
+      const recap = normalizeScoreRecap(parseBody(event), {}, { canEditAdminNote: user.role === "admin" });
       Object.assign(recap, {
         id: crypto.randomUUID(),
         createdByUserId: user.id,
@@ -996,26 +1009,28 @@ exports.handler = async (event) => {
     }
 
     if (method === "PUT" && /^\/scores\/recaps\/[^/]+$/.test(route)) {
-      const user = requireAdmin(event, data);
+      const user = requireUser(event, data);
       const recapId = decodeURIComponent(route.split("/")[3]);
       const index = data.scoreRecaps.findIndex((recap) => recap.id === recapId);
       if (index === -1) return json(404, { error: "Score recap not found." });
+      if (data.scoreRecaps[index].createdByUserId !== user.id && user.role !== "admin") return json(403, { error: "Only the uploader or admin can edit this score recap." });
       data.scoreRecaps[index] = normalizeScoreRecap(parseBody(event), {
         ...data.scoreRecaps[index],
         updatedAt: new Date().toISOString(),
         updatedByUserId: user.id,
         updatedByUsername: user.username
-      });
+      }, { canEditAdminNote: user.role === "admin" });
       await saveData(data);
       return json(200, scoreDashboard(data, user));
     }
 
     if (method === "DELETE" && /^\/scores\/recaps\/[^/]+$/.test(route)) {
-      const user = requireAdmin(event, data);
+      const user = requireUser(event, data);
       const recapId = decodeURIComponent(route.split("/")[3]);
-      const beforeCount = data.scoreRecaps.length;
+      const recap = data.scoreRecaps.find((candidate) => candidate.id === recapId);
+      if (!recap) return json(404, { error: "Score recap not found." });
+      if (recap.createdByUserId !== user.id && user.role !== "admin") return json(403, { error: "Only the uploader or admin can delete this score recap." });
       data.scoreRecaps = data.scoreRecaps.filter((recap) => recap.id !== recapId);
-      if (beforeCount === data.scoreRecaps.length) return json(404, { error: "Score recap not found." });
       await saveData(data);
       return json(200, scoreDashboard(data, user));
     }

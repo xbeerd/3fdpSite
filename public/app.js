@@ -17,6 +17,7 @@ const state = {
   scoreRecaps: [],
   bowlerStats: [],
   editingScoreRecapId: "",
+  scorePhotoDataUrl: "",
   calendarCursor: new Date().toISOString().slice(0, 7),
   selectedCalendarEventId: null,
   lastImportId: "",
@@ -686,6 +687,41 @@ function renderGraph(series) {
   `;
 }
 
+function renderScorePhotoPreview() {
+  const preview = $("#scorePhotoPreview");
+  if (!preview) return;
+  preview.classList.toggle("hidden", !state.scorePhotoDataUrl);
+  preview.innerHTML = state.scorePhotoDataUrl
+    ? `
+      <img src="${state.scorePhotoDataUrl}" alt="Uploaded recap photo preview">
+      <button class="small danger" type="button" data-clear-score-photo>Remove photo</button>
+    `
+    : "";
+}
+
+function resizeScorePhoto(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onerror = () => reject(new Error("Could not read that photo."));
+    reader.onload = () => {
+      const image = new Image();
+      image.onerror = () => reject(new Error("Could not load that photo."));
+      image.onload = () => {
+        const maxSide = 1400;
+        const scale = Math.min(1, maxSide / Math.max(image.width, image.height));
+        const canvas = document.createElement("canvas");
+        canvas.width = Math.max(1, Math.round(image.width * scale));
+        canvas.height = Math.max(1, Math.round(image.height * scale));
+        const context = canvas.getContext("2d");
+        context.drawImage(image, 0, 0, canvas.width, canvas.height);
+        resolve(canvas.toDataURL("image/jpeg", 0.78));
+      };
+      image.src = reader.result;
+    };
+    reader.readAsDataURL(file);
+  });
+}
+
 function blankScoreLine(isSub = false) {
   return { bowlerName: "", game1: "", game2: "", game3: "", isSub, paid: !isSub };
 }
@@ -721,6 +757,8 @@ function showScoreForm(recap = null) {
   form.elements.ourTeamName.value = recap?.ourTeamName || "3 Finger Death Punch";
   form.elements.opponentTeamName.value = recap?.opponentTeamName || "";
   form.elements.notes.value = recap?.notes || "";
+  state.scorePhotoDataUrl = recap?.photoDataUrl || "";
+  renderScorePhotoPreview();
   setScoreFormLines(recap?.ourTeamLines, recap?.opponentLines);
   $("#newScoreRecap").textContent = state.editingScoreRecapId ? "Editing recap" : "New recap";
 }
@@ -729,6 +767,8 @@ function hideScoreForm() {
   state.editingScoreRecapId = "";
   $("#scoreRecapForm").classList.add("hidden");
   $("#scoreRecapForm").reset();
+  state.scorePhotoDataUrl = "";
+  renderScorePhotoPreview();
   setScoreFormLines();
   $("#newScoreRecap").textContent = "New recap";
 }
@@ -749,6 +789,7 @@ function scoreFormPayload(form) {
   const payload = Object.fromEntries(new FormData(form));
   payload.ourTeamLines = readScoreLines("our");
   payload.opponentLines = readScoreLines("opponent");
+  payload.photoDataUrl = state.scorePhotoDataUrl;
   return payload;
 }
 
@@ -818,6 +859,7 @@ function renderScoreRecap(recap) {
         <span>Game 3: ${totals.ourPins[2]}${totals.opponentPins[2] ? ` / ${totals.opponentPins[2]} (${totals.margins[2] >= 0 ? "+" : ""}${totals.margins[2]})` : ""}</span>
       </div>
       ${recap.notes ? `<p class="admin-note"><strong>Admin note:</strong> ${escapeHtml(recap.notes)}</p>` : ""}
+      ${recap.photoDataUrl ? `<img class="score-photo" src="${recap.photoDataUrl}" alt="Recap photo for ${escapeHtml(formatDate(recap.date))}">` : ""}
       <div class="score-team-wrap">
         ${renderScoreTeam(recap.ourTeamLines, recap.ourTeamName || "3FDP")}
         ${renderScoreTeam(recap.opponentLines, recap.opponentTeamName || "Opponent")}
@@ -1363,9 +1405,28 @@ $("#scoreRecapForm").addEventListener("click", (event) => {
     const line = remove.closest(".score-line");
     if (line) line.remove();
   }
+  if (event.target.closest("[data-clear-score-photo]")) {
+    state.scorePhotoDataUrl = "";
+    const input = $("#scoreRecapForm input[name='recapPhoto']");
+    if (input) input.value = "";
+    renderScorePhotoPreview();
+  }
 });
 
 $("#scoreRecapForm").addEventListener("change", (event) => {
+  const fileInput = event.target.closest("[name='recapPhoto']");
+  if (fileInput) {
+    const file = fileInput.files[0];
+    if (!file) return;
+    resizeScorePhoto(file)
+      .then((dataUrl) => {
+        state.scorePhotoDataUrl = dataUrl;
+        renderScorePhotoPreview();
+        toast("Recap photo ready.");
+      })
+      .catch((error) => toast(error.message));
+    return;
+  }
   const checkbox = event.target.closest("[name='isSub']");
   if (!checkbox) return;
   const line = checkbox.closest(".score-line");

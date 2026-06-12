@@ -189,15 +189,17 @@
               <h2>Weekly recaps</h2>
               <p class="muted">Raw games are stored. Series, averages, handicaps, and margins are calculated.</p>
             </div>
-            <button id="newScoreRecap" class="admin-only hidden" type="button">New recap</button>
+            <button id="newScoreRecap" class="user-only hidden" type="button">New recap</button>
           </div>
-          <form id="scoreRecapForm" class="form score-form admin-only hidden">
+          <form id="scoreRecapForm" class="form score-form user-only hidden">
             <div class="inline-form">
               <label>Date <input name="date" type="date" required></label>
               <label>Week <input name="week" type="text" placeholder="1"></label>
               <label>Our team <input name="ourTeamName" type="text" value="3 Finger Death Punch"></label>
               <label>Opponent <input name="opponentTeamName" type="text" placeholder="Opponent"></label>
             </div>
+            <label>Recap photo <input name="recapPhoto" type="file" accept="image/*"></label>
+            <div id="scorePhotoPreview" class="score-photo-preview hidden"></div>
             <div class="score-entry-grid">
               <div>
                 <div class="score-grid-heading">
@@ -214,7 +216,7 @@
                 <div id="opponentScoreLines" class="score-lines"></div>
               </div>
             </div>
-            <label>Admin note <textarea name="notes" rows="2" placeholder="Subs, payment notes, or recap context"></textarea></label>
+            <label class="admin-only hidden">Admin note <textarea name="notes" rows="2" placeholder="Subs, payment notes, or recap context"></textarea></label>
             <div class="row-actions">
               <button type="submit">Save recap</button>
               <button id="cancelScoreEdit" class="ghost" type="button">Cancel</button>

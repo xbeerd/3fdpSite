@@ -1078,6 +1078,7 @@ async function init() {
 }
 
 $("#menuBtn").addEventListener("click", () => $("#menu").classList.toggle("hidden"));
+$("#refreshApp").addEventListener("click", () => window.location.reload());
 $$("[data-view]").forEach((button) => button.addEventListener("click", () => setView(button.dataset.view)));
 $("#showRegister").addEventListener("click", () => showRegisterForm(true));
 $("#showLogin").addEventListener("click", () => showRegisterForm(false));

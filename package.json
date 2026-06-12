@@ -6,10 +6,11 @@
   "scripts": {
     "start": "node server.js",
     "build": "echo Netlify build complete",
-    "check": "node --check server.js && node --check netlify/functions/api.js && node --check public/app.js"
+    "check": "node --check server.js && node --check netlify/functions/api.js && node --check public/app.js && node --check public/sw.js"
   },
   "dependencies": {
-    "@netlify/blobs": "^8.2.0"
+    "@netlify/blobs": "^8.2.0",
+    "web-push": "^3.6.7"
   },
   "engines": {
     "node": ">=18"

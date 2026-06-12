@@ -63,6 +63,11 @@
             <label>Add a note <textarea name="text" rows="3" placeholder="Practice updates, sub notes, bowling chatter..."></textarea></label>
             <button type="submit">Post note</button>
           </form>
+          <div id="pushControls" class="row-actions hidden">
+            <button id="enablePush" type="button" class="ghost small">Enable Sub Alerts</button>
+            <button id="disablePush" type="button" class="ghost small hidden">Disable Sub Alerts</button>
+            <span id="pushStatus" class="muted"></span>
+          </div>
           <div id="subSummary" class="summary-list"></div>
           <div id="notesList" class="feed"></div>
         </section>

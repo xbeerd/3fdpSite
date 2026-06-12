@@ -10,6 +10,8 @@ const state = {
   graphSeries: [],
   adminUsers: [],
   adminSetupOpen: false,
+  pushConfigured: false,
+  pushSubscribed: false,
   boardMode: "main",
   showAllWeights: false,
   calendarCursor: new Date().toISOString().slice(0, 7),
@@ -58,6 +60,13 @@ function importSummary(data) {
   return `Schedule upload complete: ${parts.join(", ")}.`;
 }
 
+function urlBase64ToUint8Array(value) {
+  const padding = "=".repeat((4 - value.length % 4) % 4);
+  const base64 = (value + padding).replace(/-/g, "+").replace(/_/g, "/");
+  const raw = atob(base64);
+  return Uint8Array.from([...raw].map((character) => character.charCodeAt(0)));
+}
+
 async function api(path, options = {}) {
   const response = await fetch(path, {
     credentials: "include",
@@ -77,6 +86,11 @@ function setView(view) {
   $("#menu").classList.add("hidden");
 }
 
+function viewFromHash() {
+  const value = window.location.hash.replace("#", "");
+  return ["home", "calendar", "loser", "admin"].includes(value) ? value : "";
+}
+
 function renderShell() {
   const needsSetup = Boolean(state.user?.passwordSetupRequired);
   $$(".admin-only").forEach((node) => node.classList.toggle("hidden", state.user?.role !== "admin"));
@@ -90,7 +104,10 @@ function renderShell() {
 async function logout() {
   await api("/api/logout", { method: "POST" });
   state.user = null;
+  state.pushConfigured = false;
+  state.pushSubscribed = false;
   renderShell();
+  renderPushControls();
 }
 
 function weekLabel(week) {
@@ -184,6 +201,7 @@ async function refreshBootstrap() {
   renderCalendar();
   renderContestHeader();
   if (state.user) await refreshWeightsAndBoard();
+  if (state.user) await refreshPushState();
   if (state.user?.role === "admin") await refreshAdmin();
 }
 
@@ -217,6 +235,74 @@ async function refreshNotes() {
   renderHome();
 }
 
+function pushSupported() {
+  return "serviceWorker" in navigator && "PushManager" in window && "Notification" in window;
+}
+
+function renderPushControls(message = "") {
+  const controls = $("#pushControls");
+  if (!controls) return;
+  const visible = Boolean(state.user) && pushSupported();
+  controls.classList.toggle("hidden", !visible);
+  if (!visible) return;
+  $("#enablePush").classList.toggle("hidden", state.pushSubscribed);
+  $("#disablePush").classList.toggle("hidden", !state.pushSubscribed);
+  $("#pushStatus").textContent = message || (state.pushSubscribed ? "Sub alerts enabled." : "Sub alerts off.");
+}
+
+async function pushRegistration() {
+  if (!pushSupported()) return null;
+  return navigator.serviceWorker.register("/sw.js");
+}
+
+async function refreshPushState() {
+  if (!pushSupported() || !state.user) {
+    renderPushControls();
+    return;
+  }
+  try {
+    const key = await api("/api/push/public-key");
+    state.pushConfigured = Boolean(key.configured && key.publicKey);
+    const registration = await pushRegistration();
+    const subscription = await registration.pushManager.getSubscription();
+    state.pushSubscribed = Boolean(subscription);
+    renderPushControls(state.pushConfigured ? "" : "Sub alerts need server setup.");
+  } catch {
+    state.pushConfigured = false;
+    state.pushSubscribed = false;
+    renderPushControls("Sub alerts unavailable.");
+  }
+}
+
+async function enablePushAlerts() {
+  if (!pushSupported()) return toast("This browser does not support push alerts.");
+  const key = await api("/api/push/public-key");
+  if (!key.configured || !key.publicKey) return renderPushControls("Sub alerts need server setup.");
+  const permission = await Notification.requestPermission();
+  if (permission !== "granted") return renderPushControls("Sub alerts blocked.");
+  const registration = await pushRegistration();
+  const subscription = await registration.pushManager.subscribe({
+    userVisibleOnly: true,
+    applicationServerKey: urlBase64ToUint8Array(key.publicKey)
+  });
+  await api("/api/push/subscriptions", { method: "POST", body: JSON.stringify({ subscription }) });
+  state.pushSubscribed = true;
+  renderPushControls("Sub alerts enabled.");
+  toast("Sub alerts enabled.");
+}
+
+async function disablePushAlerts() {
+  const registration = await pushRegistration();
+  const subscription = await registration.pushManager.getSubscription();
+  if (subscription) {
+    await api("/api/push/subscriptions", { method: "DELETE", body: JSON.stringify({ endpoint: subscription.endpoint }) });
+    await subscription.unsubscribe();
+  }
+  state.pushSubscribed = false;
+  renderPushControls("Sub alerts off.");
+  toast("Sub alerts disabled.");
+}
+
 function renderHome() {
   $("#subSummary").innerHTML = state.subRequests.length
     ? state.subRequests.map((request) => `
@@ -230,6 +316,7 @@ function renderHome() {
   $("#notesList").innerHTML = state.notes.length
     ? state.notes.map(renderNote).join("")
     : `<p class="empty">No notes yet.</p>`;
+  renderPushControls();
 }
 
 function renderNote(note) {
@@ -665,6 +752,7 @@ function downloadText(filename, text, type = "text/calendar") {
 async function init() {
   const me = await api("/api/me");
   state.user = me.user;
+  state.view = viewFromHash() || state.view;
   await refreshBootstrap();
   renderShell();
 }
@@ -675,6 +763,8 @@ $("#menuAuthBtn").addEventListener("click", async () => {
   if (state.user) await logout();
   else setView("login");
 });
+$("#enablePush").addEventListener("click", () => enablePushAlerts().catch((error) => toast(error.message)));
+$("#disablePush").addEventListener("click", () => disablePushAlerts().catch((error) => toast(error.message)));
 $("#prevMonth").addEventListener("click", () => moveCalendarMonth(-1));
 $("#nextMonth").addEventListener("click", () => moveCalendarMonth(1));
 

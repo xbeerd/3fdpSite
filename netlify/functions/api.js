@@ -1,11 +1,19 @@
 const crypto = require("crypto");
 const fs = require("fs");
 const path = require("path");
+const webPush = require("web-push");
 
 const DATA_FILE = path.join(process.cwd(), "data.json");
 const SESSION_SECRET = process.env.SESSION_SECRET || "local-dev-change-me";
 const TIME_ZONE = "America/Chicago";
 const DEFAULT_TEMP_PASSWORD = "changeme123";
+const VAPID_PUBLIC_KEY = process.env.VAPID_PUBLIC_KEY || "";
+const VAPID_PRIVATE_KEY = process.env.VAPID_PRIVATE_KEY || "";
+const VAPID_SUBJECT = process.env.VAPID_SUBJECT || "mailto:admin@3fdp.local";
+
+if (VAPID_PUBLIC_KEY && VAPID_PRIVATE_KEY) {
+  webPush.setVapidDetails(VAPID_SUBJECT, VAPID_PUBLIC_KEY, VAPID_PRIVATE_KEY);
+}
 
 const defaultData = {
   config: {
@@ -21,6 +29,7 @@ const defaultData = {
   notes: [],
   calendarEvents: [],
   subRequests: [],
+  pushSubscriptions: [],
   weights: []
 };
 
@@ -70,6 +79,7 @@ async function loadData() {
     notes: (stored || {}).notes || [],
     calendarEvents: (stored || {}).calendarEvents || [],
     subRequests: (stored || {}).subRequests || [],
+    pushSubscriptions: (stored || {}).pushSubscriptions || [],
     weights: (stored || {}).weights || []
   };
 
@@ -357,6 +367,52 @@ function normalizedCalendarRow(row, data) {
   };
 }
 
+function pushConfigured() {
+  return Boolean(VAPID_PUBLIC_KEY && VAPID_PRIVATE_KEY);
+}
+
+function publicPushSubscription(subscription) {
+  return {
+    id: subscription.id,
+    userId: subscription.userId,
+    username: subscription.username,
+    createdAt: subscription.createdAt,
+    updatedAt: subscription.updatedAt
+  };
+}
+
+function normalizePushSubscription(value) {
+  if (!value || typeof value !== "object") return null;
+  const endpoint = String(value.endpoint || "").trim();
+  const p256dh = String(value.keys?.p256dh || "").trim();
+  const auth = String(value.keys?.auth || "").trim();
+  if (!endpoint || !p256dh || !auth) return null;
+  return { endpoint, expirationTime: value.expirationTime || null, keys: { p256dh, auth } };
+}
+
+async function sendSubRequestNotifications(data, request, eventItem) {
+  if (!pushConfigured() || !data.pushSubscriptions.length) return;
+  const payload = JSON.stringify({
+    title: "3FDP sub needed",
+    body: `${request.requestedBy} needs a sub${eventItem?.date ? ` on ${eventItem.date}` : ""}${eventItem?.opponent ? ` vs ${eventItem.opponent}` : ""}.`,
+    url: "/#calendar",
+    tag: `sub-request-${request.id}`
+  });
+  const expired = new Set();
+  await Promise.all(data.pushSubscriptions.map(async (saved) => {
+    try {
+      await webPush.sendNotification(saved.subscription, payload);
+    } catch (error) {
+      if (error.statusCode === 404 || error.statusCode === 410) expired.add(saved.id);
+      else console.error("Push notification failed:", error.message || error);
+    }
+  }));
+  if (expired.size) {
+    data.pushSubscriptions = data.pushSubscriptions.filter((subscription) => !expired.has(subscription.id));
+    await saveData(data);
+  }
+}
+
 exports.handler = async (event) => {
   connectNetlifyBlobs(event);
   const data = await loadData();
@@ -426,6 +482,42 @@ exports.handler = async (event) => {
         events: data.calendarEvents,
         subRequests: visibleSubRequests(data)
       });
+    }
+
+    if (method === "GET" && route === "/push/public-key") {
+      return json(200, { publicKey: VAPID_PUBLIC_KEY, configured: pushConfigured() });
+    }
+
+    if (method === "POST" && route === "/push/subscriptions") {
+      const user = requireUser(event, data);
+      if (!pushConfigured()) return json(503, { error: "Push notifications are not configured yet." });
+      const subscription = normalizePushSubscription(parseBody(event).subscription);
+      if (!subscription) return json(400, { error: "Push subscription is invalid." });
+      const existing = data.pushSubscriptions.find((item) => item.subscription.endpoint === subscription.endpoint);
+      if (existing) {
+        existing.userId = user.id;
+        existing.username = user.username;
+        existing.subscription = subscription;
+        existing.updatedAt = new Date().toISOString();
+      } else {
+        data.pushSubscriptions.push({
+          id: crypto.randomUUID(),
+          userId: user.id,
+          username: user.username,
+          subscription,
+          createdAt: new Date().toISOString()
+        });
+      }
+      await saveData(data);
+      return json(201, { subscriptions: data.pushSubscriptions.filter((item) => item.userId === user.id).map(publicPushSubscription) });
+    }
+
+    if (method === "DELETE" && route === "/push/subscriptions") {
+      const user = requireUser(event, data);
+      const endpoint = String(parseBody(event).endpoint || "").trim();
+      data.pushSubscriptions = data.pushSubscriptions.filter((item) => item.userId !== user.id || (endpoint && item.subscription.endpoint !== endpoint));
+      await saveData(data);
+      return json(200, { subscriptions: data.pushSubscriptions.filter((item) => item.userId === user.id).map(publicPushSubscription) });
     }
 
     if (method === "PUT" && route === "/admin/config") {
@@ -629,7 +721,7 @@ exports.handler = async (event) => {
       const eventId = String(body.eventId || "");
       const eventItem = data.calendarEvents.find((candidate) => candidate.id === eventId);
       if (!eventItem) return json(404, { error: "Calendar event not found." });
-      data.subRequests.push({
+      const request = {
         id: crypto.randomUUID(),
         eventId,
         requestedByUserId: user.id,
@@ -638,8 +730,10 @@ exports.handler = async (event) => {
         responses: [],
         status: "open",
         createdAt: new Date().toISOString()
-      });
+      };
+      data.subRequests.push(request);
       await saveData(data);
+      await sendSubRequestNotifications(data, request, eventItem);
       return json(201, { subRequests: visibleSubRequests(data) });
     }
 

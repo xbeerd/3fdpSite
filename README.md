@@ -48,6 +48,18 @@ For better protection, set a Netlify environment variable named `ADMIN_SETUP_COD
 - Password reset
 - User deletion
 
+## Push Notifications
+
+Sub request push alerts use standard Web Push. Set these Netlify environment variables before deploying push alerts:
+
+```text
+VAPID_PUBLIC_KEY
+VAPID_PRIVATE_KEY
+VAPID_SUBJECT
+```
+
+`VAPID_SUBJECT` should be a contact URI such as `mailto:you@example.com`.
+
 ## Schedule CSV
 
 Supported headers:

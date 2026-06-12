@@ -1145,11 +1145,21 @@ $("#loginForm").addEventListener("submit", async (event) => {
 $("#registerForm").addEventListener("submit", async (event) => {
   event.preventDefault();
   const form = event.currentTarget;
+  const submit = form.querySelector("button[type='submit']");
+  if (submit?.disabled) return;
   const formData = new FormData(form);
   const enableSubAlerts = formData.get("enableSubAlerts") === "on";
   formData.delete("enableSubAlerts");
+  if (submit) {
+    submit.disabled = true;
+    submit.textContent = "Creating...";
+  }
   try {
-    await api("/api/register", { method: "POST", body: JSON.stringify(Object.fromEntries(formData)) });
+    try {
+      await api("/api/register", { method: "POST", body: JSON.stringify(Object.fromEntries(formData)) });
+    } catch (error) {
+      if (!/already registered/i.test(error.message)) throw error;
+    }
     const data = await api("/api/login", { method: "POST", body: JSON.stringify({ email: formData.get("email"), password: formData.get("password") }) });
     state.user = data.user;
     state.view = "home";
@@ -1160,6 +1170,11 @@ $("#registerForm").addEventListener("submit", async (event) => {
     if (enableSubAlerts) await enablePushAlerts();
   } catch (error) {
     toast(error.message);
+  } finally {
+    if (submit?.isConnected) {
+      submit.disabled = false;
+      submit.textContent = "Create account";
+    }
   }
 });
 

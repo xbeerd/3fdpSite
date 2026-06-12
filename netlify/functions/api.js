@@ -654,6 +654,32 @@ async function sendSubRequestNotifications(data, request, eventItem) {
   }
 }
 
+async function sendBlogReplyNotification(data, note, comment) {
+  if (!pushConfigured() || !data.pushSubscriptions.length) return;
+  if (!note?.userId || note.userId === comment.userId) return;
+  const subscriptions = data.pushSubscriptions.filter((saved) => saved.userId === note.userId);
+  if (!subscriptions.length) return;
+  const payload = JSON.stringify({
+    title: "3FDP blog reply",
+    body: `${comment.username} replied to your post.`,
+    url: "/#home",
+    tag: `blog-reply-${note.id}`
+  });
+  const expired = new Set();
+  await Promise.all(subscriptions.map(async (saved) => {
+    try {
+      await webPush.sendNotification(saved.subscription, payload);
+    } catch (error) {
+      if (error.statusCode === 404 || error.statusCode === 410) expired.add(saved.id);
+      else console.error("Blog reply push notification failed:", error.message || error);
+    }
+  }));
+  if (expired.size) {
+    data.pushSubscriptions = data.pushSubscriptions.filter((subscription) => !expired.has(subscription.id));
+    await saveData(data);
+  }
+}
+
 exports.handler = async (event) => {
   connectNetlifyBlobs(event);
   const data = await loadData();
@@ -867,8 +893,10 @@ exports.handler = async (event) => {
       if (!note) return json(404, { error: "Blog entry not found." });
       if (!text) return json(400, { error: "Comment cannot be blank." });
       note.comments = note.comments || [];
-      note.comments.push({ id: crypto.randomUUID(), userId: user.id, username: user.username, text, createdAt: new Date().toISOString() });
+      const comment = { id: crypto.randomUUID(), userId: user.id, username: user.username, text, createdAt: new Date().toISOString() };
+      note.comments.push(comment);
       await saveData(data);
+      await sendBlogReplyNotification(data, note, comment);
       return json(201, { notes: sortedNotes(data) });
     }
 

@@ -60,6 +60,8 @@ VAPID_SUBJECT
 
 `VAPID_SUBJECT` should be a contact URI such as `mailto:you@example.com`.
 
+Push alerts are used for sub requests and for notifying a blog post author when another user replies to their post.
+
 ## Score Recap Scanning
 
 Recap photo scanning uses OpenAI vision from the Netlify function. Set this Netlify environment variable before using **Scan photo**:

@@ -945,6 +945,7 @@ function renderAdmin() {
       <td>${escapeHtml(user.role)}</td>
       <td>${user.weightsEntered.length}</td>
       <td class="row-actions">
+        <button class="small ghost" type="button" data-edit-user="${user.id}">Edit</button>
         <button class="small ghost" type="button" data-reset-user="${user.id}">Reset</button>
         <button class="small danger" type="button" data-delete-user="${user.id}">Delete</button>
       </td>
@@ -1761,12 +1762,33 @@ $("#adminCreateUserForm").addEventListener("submit", async (event) => {
 });
 
 $("#adminUsers").addEventListener("click", async (event) => {
+  const edit = event.target.closest("[data-edit-user]");
   const reset = event.target.closest("[data-reset-user]");
   const del = event.target.closest("[data-delete-user]");
-  const actionButton = reset || del;
+  const actionButton = edit || reset || del;
   if (actionButton) actionButton.disabled = true;
   let previousUsers = null;
   try {
+    if (edit) {
+      const user = state.adminUsers.find((item) => item.id === edit.dataset.editUser);
+      if (!user) return toast("User not found.");
+      const username = prompt("Username:", user.username || "");
+      if (username === null) return;
+      const email = prompt("Email:", user.email || "");
+      if (email === null) return;
+      const recapName = prompt("Recap sheet name:", user.recapName || "");
+      if (recapName === null) return;
+      const role = prompt("Role (admin or user):", user.role || "user");
+      if (role === null) return;
+      previousUsers = [...state.adminUsers];
+      state.adminUsers = state.adminUsers.map((item) => item.id === user.id ? { ...item, username, email, recapName, role } : item);
+      renderAdmin();
+      await api(`/api/admin/users/${user.id}`, { method: "PUT", body: JSON.stringify({ username, email, recapName, role }) });
+      await refreshAdmin();
+      setActionStatus("#userAdminStatus", "User updated.");
+      toast("User updated.");
+      return;
+    }
     if (reset) {
       const password = prompt("Temporary password:", "changeme123");
       if (!password) return;
@@ -1785,7 +1807,7 @@ $("#adminUsers").addEventListener("click", async (event) => {
       toast("User deleted.");
     }
   } catch (error) {
-    if (del && previousUsers) {
+    if ((edit || del) && previousUsers) {
       state.adminUsers = previousUsers;
       renderAdmin();
     }

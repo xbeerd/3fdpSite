@@ -828,6 +828,35 @@ exports.handler = async (event) => {
       return json(201, { ok: true });
     }
 
+    if (method === "PUT" && /^\/admin\/users\/[^/]+$/.test(route)) {
+      const admin = requireAdmin(event, data);
+      const userId = decodeURIComponent(route.split("/")[3]);
+      const target = data.users.find((candidate) => candidate.id === userId);
+      if (!target) return json(404, { error: "User not found." });
+      const body = parseBody(event);
+      const email = String(body.email || "").trim().toLowerCase();
+      const username = String(body.username || "").trim();
+      const recapName = String(body.recapName || "").trim();
+      const role = String(body.role || target.role || "user").trim();
+      if (!email.includes("@") || username.length < 2) return json(400, { error: "Use a valid email and username." });
+      if (recapName.length > 80) return json(400, { error: "Recap sheet name is too long." });
+      if (!["admin", "user"].includes(role)) return json(400, { error: "Role must be admin or user." });
+      if (target.id === admin.id && role !== "admin") return json(400, { error: "You cannot remove admin from your current account." });
+      if (data.users.some((user) => user.id !== userId && (user.email === email || user.username.toLowerCase() === username.toLowerCase()))) {
+        return json(409, { error: "That email or username is already registered." });
+      }
+      target.email = email;
+      target.username = username;
+      target.recapName = recapName;
+      target.role = role;
+      target.updatedAt = new Date().toISOString();
+      data.pushSubscriptions.forEach((subscription) => {
+        if (subscription.userId === target.id) subscription.username = username;
+      });
+      await saveData(data);
+      return json(200, { user: publicUser(target) });
+    }
+
     if (method === "DELETE" && /^\/admin\/users\/[^/]+$/.test(route)) {
       const admin = requireAdmin(event, data);
       const userId = decodeURIComponent(route.split("/")[3]);

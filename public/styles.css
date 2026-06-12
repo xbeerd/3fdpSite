@@ -364,6 +364,26 @@ textarea:-webkit-autofill {
   min-width: 0;
 }
 
+.segmented {
+  display: inline-flex;
+  gap: 0.2rem;
+  padding: 0.2rem;
+  background: #f2f2f2;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+
+.segmented button {
+  background: transparent;
+  color: var(--text);
+  box-shadow: none;
+}
+
+.segmented button.is-active {
+  color: white;
+  background: var(--ink);
+}
+
 .range-controls {
   display: flex;
   gap: 0.75rem;
@@ -378,6 +398,16 @@ table { width: 100%; border-collapse: collapse; min-width: 560px; }
 th, td { padding: 0.85rem 0.7rem; border-bottom: 1px solid var(--line); text-align: left; }
 th { color: var(--muted); font-size: 0.76rem; text-transform: uppercase; }
 .empty { color: var(--muted); text-align: center; }
+
+.action-status {
+  margin: 0.75rem 0 0;
+  padding: 0.75rem 0.85rem;
+  color: var(--ink);
+  background: #f7f1e8;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  font-weight: 800;
+}
 
 .chart { display: grid; gap: 0.7rem; margin: 1rem 0; min-width: 0; }
 .graph-wrap { max-width: 100%; min-width: 0; overflow-x: auto; border: 1px solid var(--line); border-radius: 8px; background: white; }

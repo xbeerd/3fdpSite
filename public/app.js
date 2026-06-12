@@ -10,8 +10,11 @@ const state = {
   graphSeries: [],
   adminUsers: [],
   adminSetupOpen: false,
+  boardMode: "main",
+  showAllWeights: false,
   calendarCursor: new Date().toISOString().slice(0, 7),
   selectedCalendarEventId: null,
+  lastImportId: "",
   view: "home"
 };
 
@@ -33,6 +36,26 @@ function toast(message) {
   node.textContent = message;
   node.classList.remove("hidden");
   setTimeout(() => node.classList.add("hidden"), 3500);
+}
+
+function setActionStatus(selector, message) {
+  const node = $(selector);
+  if (!node) return;
+  node.textContent = message;
+  node.classList.toggle("hidden", !message);
+}
+
+function updateUndoImportButton() {
+  const button = $("#undoCsvImport");
+  if (!button) return;
+  button.classList.toggle("hidden", !state.lastImportId);
+}
+
+function importSummary(data) {
+  const parts = [`${data.importedCount || 0} added`];
+  if (data.skippedDuplicateCount) parts.push(`${data.skippedDuplicateCount} duplicate${data.skippedDuplicateCount === 1 ? "" : "s"} skipped`);
+  if (data.invalidCount) parts.push(`${data.invalidCount} invalid row${data.invalidCount === 1 ? "" : "s"} skipped`);
+  return `Schedule upload complete: ${parts.join(", ")}.`;
 }
 
 async function api(path, options = {}) {
@@ -94,6 +117,35 @@ function monthLabel(cursor) {
   return new Date(year, month - 1, 1).toLocaleDateString(undefined, { month: "long", year: "numeric" });
 }
 
+function dateInRange(date, fromDate, toDate) {
+  if (!date) return false;
+  if (fromDate && date < fromDate) return false;
+  if (toDate && date > toDate) return false;
+  return true;
+}
+
+function mainBoardRangeParams() {
+  const entries = state.schedule.entries || [];
+  if (!entries.length) return { fromWeek: 0, toWeek: "" };
+  if (!state.schedule.activeContest) return { fromWeek: 0, toWeek: "" };
+  const today = state.schedule.todayYmd || todayYmd();
+  const currentIndex = entries.findIndex((entry, index) => {
+    const next = entries[index + 1];
+    return entry.date <= today && (!next || today < next.date);
+  });
+  const toEntry = entries[Math.max(currentIndex, 0)] || entries[0];
+  const fromEntry = entries[Math.max((toEntry.week || 0) - 1, 0)] || entries[0];
+  return { fromWeek: fromEntry.week, toWeek: toEntry.week };
+}
+
+function boardRangeLabel() {
+  const entries = state.schedule.entries || [];
+  if (!entries.length) return "";
+  if (!state.schedule.activeContest) return "Full contest range";
+  const { fromWeek, toWeek } = mainBoardRangeParams();
+  return `${weekLabel(fromWeek)} to ${weekLabel(toWeek)}`;
+}
+
 function moveCalendarMonth(delta) {
   const [year, month] = state.calendarCursor.split("-").map(Number);
   const next = new Date(year, month - 1 + delta, 1);
@@ -131,7 +183,6 @@ async function refreshBootstrap() {
   renderHome();
   renderCalendar();
   renderContestHeader();
-  renderRangeOptions();
   if (state.user) await refreshWeightsAndBoard();
   if (state.user?.role === "admin") await refreshAdmin();
 }
@@ -140,15 +191,13 @@ async function refreshWeightsAndBoard() {
   const weights = await api("/api/weights");
   state.weights = weights.weights;
   state.schedule = weights.schedule;
-  const fromWeek = $("#rangeForm select[name='fromWeek']").value || 0;
-  const toWeek = $("#rangeForm select[name='toWeek']").value || "";
+  const { fromWeek, toWeek } = mainBoardRangeParams();
   const dashboard = await api(`/api/biggest-loser/dashboard?fromWeek=${fromWeek}&toWeek=${toWeek}`);
   state.leaderboard = dashboard.leaderboard;
   state.graphSeries = dashboard.graphSeries;
   state.schedule = dashboard.schedule;
   renderContestHeader();
   renderWeights();
-  renderRangeOptions();
   renderBoard();
 }
 
@@ -156,6 +205,12 @@ async function refreshAdmin() {
   const data = await api("/api/admin/users");
   state.adminUsers = data.users;
   renderAdmin();
+}
+
+async function refreshNotes() {
+  const data = await api("/api/notes");
+  state.notes = data.notes;
+  renderHome();
 }
 
 function renderHome() {
@@ -338,34 +393,42 @@ function calculatePersonalProgress() {
 }
 
 function renderWeights() {
-  $("#myWeights").innerHTML = state.weights.length
-    ? state.weights.map((entry) => `
+  const sorted = [...state.weights].sort((a, b) => String(b.entryDate || b.date).localeCompare(String(a.entryDate || a.date)) || String(b.createdAt || "").localeCompare(String(a.createdAt || "")));
+  const visible = state.showAllWeights ? sorted : sorted.slice(0, 8);
+  $("#myWeights").innerHTML = visible.length
+    ? visible.map((entry) => `
       <tr>
         <td>${escapeHtml(entry.entryDate || entry.date)}</td>
         <td>${escapeHtml(entry.weight)}</td>
         <td>${new Date(entry.createdAt).toLocaleString()}</td>
+        <td class="row-actions">
+          <button class="small ghost" type="button" data-edit-weight="${entry.id}">Edit</button>
+          <button class="small danger" type="button" data-delete-weight="${entry.id}">Delete</button>
+        </td>
       </tr>
     `).join("")
-    : `<tr><td colspan="3" class="empty">No weights entered yet.</td></tr>`;
-}
-
-function renderRangeOptions() {
-  const from = $("#rangeForm select[name='fromWeek']");
-  const to = $("#rangeForm select[name='toWeek']");
-  const currentFrom = from.value || "0";
-  const currentTo = to.value || "";
-  from.innerHTML = state.schedule.entries.map((entry) => `<option value="${entry.week}">${weekLabel(entry.week)}</option>`).join("");
-  to.innerHTML = `<option value="">Latest</option>` + state.schedule.entries.map((entry) => `<option value="${entry.week}">${weekLabel(entry.week)}</option>`).join("");
-  from.value = currentFrom;
-  to.value = currentTo;
+    : `<tr><td colspan="4" class="empty">No weights entered yet.</td></tr>`;
+  const toggle = $("#toggleWeightLog");
+  toggle.classList.toggle("hidden", sorted.length <= 8);
+  toggle.textContent = state.showAllWeights ? "Show fewer entries" : `Show all ${sorted.length} entries`;
 }
 
 function renderBoard() {
-  if (!state.schedule.activeContest) {
-    $("#leaderboard").innerHTML = `<tr><td colspan="4" class="empty">No active contest.</td></tr>`;
-    renderPersonalGraph();
+  const isPersonal = state.boardMode === "personal";
+  $("#boardModeControls [data-board-mode='main']").classList.toggle("is-active", !isPersonal);
+  $("#boardModeControls [data-board-mode='personal']").classList.toggle("is-active", isPersonal);
+  $("#personalRangeForm").classList.toggle("hidden", !isPersonal);
+  $("#boardEyebrow").textContent = isPersonal ? "Personal Board" : "Main Board";
+  $("#boardTitle").textContent = isPersonal ? "Your percent change" : "Percentage weight loss";
+  $("#boardSubtitle").textContent = isPersonal
+    ? "Only you can see your personal board."
+    : (state.schedule.activeContest ? `Week-to-week: ${boardRangeLabel()}` : "Contest date range only.");
+
+  if (isPersonal) {
+    renderPersonalBoard();
     return;
   }
+  $("#boardHead").innerHTML = `<tr><th>Rank</th><th>User</th><th>% Lost</th><th>Through</th></tr>`;
   $("#leaderboard").innerHTML = state.leaderboard.length
     ? state.leaderboard.map((row, index) => `
       <tr>
@@ -379,19 +442,47 @@ function renderBoard() {
   renderGraph(state.graphSeries);
 }
 
-function renderPersonalGraph() {
-  if (!state.weights.length) {
+function filteredPersonalWeights() {
+  const form = $("#personalRangeForm");
+  const fromDate = form.elements.fromDate.value;
+  const toDate = form.elements.toDate.value;
+  return state.weights.filter((entry) => dateInRange(entry.entryDate || entry.date, fromDate, toDate));
+}
+
+function personalPoints(weights) {
+  if (!weights.length) return [];
+  const first = weights[0];
+  if (!first || first.weight <= 0) return [];
+  return weights.map((entry, index) => ({
+    week: index,
+    label: entry.entryDate || entry.date,
+    date: entry.entryDate || entry.date,
+    weight: entry.weight,
+    percentLost: Number((((first.weight - entry.weight) / first.weight) * 100).toFixed(2))
+  }));
+}
+
+function renderPersonalBoard() {
+  const weights = filteredPersonalWeights();
+  const points = personalPoints(weights);
+  $("#boardHead").innerHTML = `<tr><th>Date</th><th>Weight</th><th>% Change</th><th>Logged</th></tr>`;
+  $("#leaderboard").innerHTML = points.length
+    ? points.map((point, index) => `
+      <tr>
+        <td>${escapeHtml(point.date)}</td>
+        <td>${escapeHtml(point.weight)}</td>
+        <td>${formatPercent(point.percentLost)}</td>
+        <td>${new Date(weights[index].createdAt).toLocaleString()}</td>
+      </tr>
+    `).join("")
+    : `<tr><td colspan="4" class="empty">No personal entries in this range.</td></tr>`;
+  if (!points.length) {
     $("#chart").innerHTML = `<p class="empty">Enter weights to see your graph.</p>`;
     return;
   }
-  const first = state.weights[0];
   renderGraph([{
     user: { username: state.user?.username || "You" },
-    points: state.weights.map((entry, index) => ({
-      week: index,
-      label: entry.entryDate || entry.date,
-      percentLost: Number((((first.weight - entry.weight) / first.weight) * 100).toFixed(2))
-    }))
+    points
   }]);
 }
 
@@ -416,7 +507,10 @@ function renderGraph(series) {
     <line x1="${pad.left}" y1="${y(tick)}" x2="${width - pad.right}" y2="${y(tick)}" class="grid-line"></line>
     <text x="${pad.left - 10}" y="${y(tick) + 4}" class="axis-label" text-anchor="end">${tick.toFixed(1)}%</text>
   `).join("");
-  const labels = weeks.map((week) => `<text x="${x(week)}" y="${height - 16}" class="axis-label" text-anchor="middle">${weekLabel(week)}</text>`).join("");
+  const labels = weeks.map((week) => {
+    const point = allPoints.find((candidate) => candidate.week === week);
+    return `<text x="${x(week)}" y="${height - 16}" class="axis-label" text-anchor="middle">${escapeHtml(point?.label || weekLabel(week))}</text>`;
+  }).join("");
   const lines = active.map((row, index) => {
     const color = colors[index % colors.length];
     const points = row.points.map((point) => `${x(point.week)},${y(point.percentLost)}`).join(" ");
@@ -519,21 +613,38 @@ function timeToIcs(time, fallback = "18:30") {
   return `${String(hour).padStart(2, "0")}${minute}00`;
 }
 
-function eventToIcs(eventItem) {
+function escapeIcs(value) {
+  return String(value || "")
+    .replace(/\\/g, "\\\\")
+    .replace(/\r?\n/g, "\\n")
+    .replace(/,/g, "\\,")
+    .replace(/;/g, "\\;");
+}
+
+function eventToIcsEntry(eventItem, method = "PUBLISH") {
   const date = eventItem.date.replaceAll("-", "");
   const practice = timeToIcs(eventItem.practiceTime || eventItem.startTime);
   return [
-    "BEGIN:VCALENDAR",
-    "VERSION:2.0",
-    "PRODID:-//3FDP//Team Site//EN",
     "BEGIN:VEVENT",
     `UID:${eventItem.id}@3fdp`,
     `DTSTAMP:${new Date().toISOString().replace(/[-:]/g, "").split(".")[0]}Z`,
     `DTSTART:${date}T${practice}`,
-    `SUMMARY:${eventItem.title || "Bowling"}`,
-    eventItem.location ? `LOCATION:${eventItem.location}` : "",
-    `DESCRIPTION:Start ${eventItem.startTime || ""}; Lane ${eventItem.lane || ""}; Opponent ${eventItem.opponent || ""}${eventItem.location ? `; Location ${eventItem.location}` : ""}`,
-    "END:VEVENT",
+    method === "CANCEL" ? "STATUS:CANCELLED" : "",
+    method === "CANCEL" ? "SEQUENCE:1" : "",
+    `SUMMARY:${escapeIcs(eventItem.title || "Bowling")}`,
+    eventItem.location ? `LOCATION:${escapeIcs(eventItem.location)}` : "",
+    `DESCRIPTION:${escapeIcs(`Start ${eventItem.startTime || ""}; Lane ${eventItem.lane || ""}; Opponent ${eventItem.opponent || ""}${eventItem.location ? `; Location ${eventItem.location}` : ""}`)}`,
+    "END:VEVENT"
+  ].filter(Boolean).join("\r\n");
+}
+
+function eventsToIcs(events, method = "PUBLISH") {
+  return [
+    "BEGIN:VCALENDAR",
+    "VERSION:2.0",
+    "PRODID:-//3FDP//Team Site//EN",
+    `METHOD:${method}`,
+    ...events.map((eventItem) => eventToIcsEntry(eventItem, method)),
     "END:VCALENDAR"
   ].filter(Boolean).join("\r\n");
 }
@@ -612,38 +723,48 @@ $("#passwordSetupForm").addEventListener("submit", async (event) => {
 $("#noteForm").addEventListener("submit", async (event) => {
   event.preventDefault();
   const form = event.currentTarget;
+  const submit = form.querySelector("button[type='submit']");
+  if (submit) submit.disabled = true;
   try {
-    const data = await api("/api/notes", { method: "POST", body: JSON.stringify(Object.fromEntries(new FormData(form))) });
-    state.notes = data.notes;
+    await api("/api/notes", { method: "POST", body: JSON.stringify(Object.fromEntries(new FormData(form))) });
     form.reset();
-    renderHome();
+    await refreshNotes();
+    toast("Blog note saved.");
   } catch (error) {
     toast(error.message);
+  } finally {
+    if (submit) submit.disabled = false;
   }
 });
 
 $("#notesList").addEventListener("click", async (event) => {
   const edit = event.target.closest("[data-edit-note]");
   const del = event.target.closest("[data-delete-note]");
+  const actionButton = edit || del;
+  if (actionButton) actionButton.disabled = true;
   try {
     if (edit) {
       const note = state.notes.find((item) => item.id === edit.dataset.editNote);
       if (!note) return;
       const text = prompt("Edit blog entry:", note.text);
       if (text === null) return;
-      const data = await api(`/api/notes/${edit.dataset.editNote}`, { method: "PUT", body: JSON.stringify({ text }) });
-      state.notes = data.notes;
-      renderHome();
+      await api(`/api/notes/${edit.dataset.editNote}`, { method: "PUT", body: JSON.stringify({ text }) });
+      await refreshNotes();
       toast("Blog entry updated.");
+      return;
     }
     if (del && confirm("Delete this blog entry and its replies?")) {
-      const data = await api(`/api/notes/${del.dataset.deleteNote}`, { method: "DELETE" });
-      state.notes = data.notes;
+      const noteId = del.dataset.deleteNote;
+      await api(`/api/notes/${noteId}`, { method: "DELETE" });
+      state.notes = state.notes.filter((note) => note.id !== noteId);
       renderHome();
+      await refreshNotes();
       toast("Blog entry deleted.");
     }
   } catch (error) {
     toast(error.message);
+  } finally {
+    if (actionButton?.isConnected) actionButton.disabled = false;
   }
 });
 
@@ -671,7 +792,7 @@ $("#calendarList").addEventListener("click", async (event) => {
   const deleteSubButton = event.target.closest("[data-delete-sub-request]");
   if (icsButton) {
     const eventItem = state.events.find((item) => item.id === icsButton.dataset.ics);
-    if (eventItem) downloadText(`${eventItem.date}-bowling.ics`, eventToIcs(eventItem));
+    if (eventItem) downloadText(`${eventItem.date}-bowling.ics`, eventsToIcs([eventItem]));
   }
   if (deleteEventButton && confirm("Remove this calendar event and any related sub requests?")) {
     try {
@@ -681,7 +802,7 @@ $("#calendarList").addEventListener("click", async (event) => {
       if (state.selectedCalendarEventId === deleteEventButton.dataset.deleteEvent) state.selectedCalendarEventId = null;
       renderHome();
       renderCalendar();
-      toast("Calendar event removed.");
+      toast(`${data.removedCount || 1} calendar event${data.removedCount === 1 ? "" : "s"} removed.`);
     } catch (error) {
       toast(error.message);
     }
@@ -745,7 +866,12 @@ $("#calendarGrid").addEventListener("click", (event) => {
 
 $("#downloadAllIcs").addEventListener("click", () => {
   if (!state.events.length) return toast("No events to download.");
-  downloadText("3fdp-season.ics", state.events.map(eventToIcs).join("\r\n"));
+  downloadText("3fdp-season.ics", eventsToIcs(state.events));
+});
+
+$("#downloadCancelIcs").addEventListener("click", () => {
+  if (!state.events.length) return toast("No events to remove.");
+  downloadText("3fdp-season-cancel.ics", eventsToIcs(state.events, "CANCEL"));
 });
 
 $("#quickEventForm").addEventListener("submit", async (event) => {
@@ -758,7 +884,7 @@ $("#quickEventForm").addEventListener("submit", async (event) => {
     state.events = data.events;
     state.selectedCalendarEventId = [...state.events].sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)))[0]?.id || state.selectedCalendarEventId;
     renderCalendar();
-    toast("Calendar event added.");
+    toast(data.skippedDuplicateCount ? "Duplicate event skipped." : "Calendar event added.");
   } catch (error) {
     toast(error.message);
   }
@@ -770,7 +896,8 @@ $("#weightForm").addEventListener("submit", async (event) => {
   const payload = Object.fromEntries(new FormData(form));
   if (!payload.date) payload.date = todayYmd();
   try {
-    await api("/api/weights", { method: "POST", body: JSON.stringify(payload) });
+    const data = await api("/api/weights", { method: "POST", body: JSON.stringify(payload) });
+    state.weights = data.weights;
     form.reset();
     await refreshWeightsAndBoard();
     toast("Weight saved.");
@@ -779,7 +906,54 @@ $("#weightForm").addEventListener("submit", async (event) => {
   }
 });
 
-$("#rangeForm").addEventListener("change", refreshWeightsAndBoard);
+$("#myWeights").addEventListener("click", async (event) => {
+  const editButton = event.target.closest("[data-edit-weight]");
+  const deleteButton = event.target.closest("[data-delete-weight]");
+  if (!editButton && !deleteButton) return;
+  const weightId = (editButton || deleteButton).dataset.editWeight || (editButton || deleteButton).dataset.deleteWeight;
+  const entry = state.weights.find((item) => item.id === weightId);
+  if (!entry) return toast("Weight entry not found.");
+  try {
+    if (editButton) {
+      const date = prompt("Entry date:", entry.entryDate || entry.date || todayYmd());
+      if (!date) return;
+      const weight = prompt("Weight:", entry.weight);
+      if (!weight) return;
+      const data = await api(`/api/weights/${weightId}`, { method: "PUT", body: JSON.stringify({ date, weight }) });
+      state.weights = data.weights;
+      await refreshWeightsAndBoard();
+      toast("Weight entry updated.");
+    }
+    if (deleteButton && confirm("Delete this weight entry?")) {
+      const data = await api(`/api/weights/${weightId}`, { method: "DELETE" });
+      state.weights = data.weights;
+      await refreshWeightsAndBoard();
+      toast("Weight entry deleted.");
+    }
+  } catch (error) {
+    toast(error.message);
+  }
+});
+
+$("#boardModeControls").addEventListener("click", (event) => {
+  const button = event.target.closest("[data-board-mode]");
+  if (!button) return;
+  state.boardMode = button.dataset.boardMode;
+  renderBoard();
+});
+
+$("#personalRangeForm").addEventListener("change", renderBoard);
+
+$("#clearPersonalRange").addEventListener("click", () => {
+  const form = $("#personalRangeForm");
+  form.reset();
+  renderBoard();
+});
+
+$("#toggleWeightLog").addEventListener("click", () => {
+  state.showAllWeights = !state.showAllWeights;
+  renderWeights();
+});
 
 $("#configForm").addEventListener("submit", async (event) => {
   event.preventDefault();
@@ -789,9 +963,11 @@ $("#configForm").addEventListener("submit", async (event) => {
     state.config = data.config;
     state.schedule = data.schedule;
     renderContestHeader();
-    renderRangeOptions();
+    renderBoard();
+    setActionStatus("#configStatus", "Setup saved.");
     toast("Setup saved.");
   } catch (error) {
+    setActionStatus("#configStatus", error.message);
     toast(error.message);
   }
 });
@@ -801,13 +977,48 @@ $("#csvForm").addEventListener("submit", async (event) => {
   const form = event.currentTarget;
   const file = form.elements.csv.files[0];
   if (!file) return toast("Choose a CSV file.");
+  const action = event.submitter?.value || "upload";
+  if (action === "delete" && !confirm("Delete matching schedule events from this CSV?")) return;
   try {
     const events = csvToEvents(await file.text());
-    const data = await api("/api/calendar/events", { method: "POST", body: JSON.stringify({ events }) });
+    const data = action === "delete"
+      ? await api("/api/calendar/events/delete-by-csv", { method: "POST", body: JSON.stringify({ events }) })
+      : await api("/api/calendar/events", { method: "POST", body: JSON.stringify({ events }) });
     state.events = data.events;
+    state.subRequests = data.subRequests || state.subRequests;
+    state.lastImportId = action === "upload" ? (data.importId || "") : "";
+    updateUndoImportButton();
+    state.selectedCalendarEventId = selectedCalendarEvent() ? state.selectedCalendarEventId : null;
+    renderHome();
     renderCalendar();
-    toast("Schedule uploaded.");
+    const message = action === "delete"
+      ? `Schedule CSV delete complete: ${data.removedCount || 0} event${data.removedCount === 1 ? "" : "s"} removed${data.invalidCount ? `, ${data.invalidCount} invalid row${data.invalidCount === 1 ? "" : "s"} skipped` : ""}.`
+      : importSummary(data);
+    setActionStatus("#csvStatus", message);
+    form.reset();
+    toast(message);
   } catch (error) {
+    setActionStatus("#csvStatus", error.message);
+    toast(error.message);
+  }
+});
+
+$("#undoCsvImport").addEventListener("click", async () => {
+  if (!state.lastImportId) return;
+  if (!confirm("Undo the last schedule CSV upload?")) return;
+  try {
+    const data = await api(`/api/calendar/imports/${state.lastImportId}`, { method: "DELETE" });
+    state.events = data.events;
+    state.subRequests = data.subRequests;
+    state.lastImportId = "";
+    updateUndoImportButton();
+    renderHome();
+    renderCalendar();
+    const message = `Last schedule upload undone: ${data.removedCount} event${data.removedCount === 1 ? "" : "s"} removed.`;
+    setActionStatus("#csvStatus", message);
+    toast(message);
+  } catch (error) {
+    setActionStatus("#csvStatus", error.message);
     toast(error.message);
   }
 });
@@ -820,8 +1031,10 @@ $("#adminCreateUserForm").addEventListener("submit", async (event) => {
     form.reset();
     form.elements.password.value = "changeme123";
     await refreshAdmin();
+    setActionStatus("#userAdminStatus", "User created.");
     toast("User created.");
   } catch (error) {
+    setActionStatus("#userAdminStatus", error.message);
     toast(error.message);
   }
 });
@@ -834,14 +1047,17 @@ $("#adminUsers").addEventListener("click", async (event) => {
       const password = prompt("Temporary password:", "changeme123");
       if (!password) return;
       await api(`/api/admin/users/${reset.dataset.resetUser}/reset-password`, { method: "POST", body: JSON.stringify({ password }) });
+      setActionStatus("#userAdminStatus", "Password reset.");
       toast("Password reset.");
     }
     if (del && confirm("Delete this user and their weights?")) {
       await api(`/api/admin/users/${del.dataset.deleteUser}`, { method: "DELETE" });
       await refreshAdmin();
+      setActionStatus("#userAdminStatus", "User deleted.");
       toast("User deleted.");
     }
   } catch (error) {
+    setActionStatus("#userAdminStatus", error.message);
     toast(error.message);
   }
 });

@@ -333,6 +333,30 @@ function findSubRequest(data, requestId) {
   return data.subRequests.find((request) => request.id === requestId);
 }
 
+function eventDuplicateKey(row) {
+  return [
+    row.date,
+    row.lane,
+    row.opponent,
+    row.startTime,
+    row.practiceTime,
+    row.location
+  ].map((value) => String(value || "").trim().toLowerCase()).join("|");
+}
+
+function normalizedCalendarRow(row, data) {
+  return {
+    date: row.date,
+    startTime: row.startTime || data.config.bowlingStartTime,
+    practiceTime: row.practiceTime || data.config.practiceStartTime,
+    lane: row.lane || "",
+    location: row.location || "",
+    leagueName: row.leagueName || "",
+    opponent: row.opponent || "",
+    title: row.title || (row.leagueName ? `${row.leagueName}${row.opponent ? ` vs ${row.opponent}` : ""}` : `Bowling vs ${row.opponent || "TBD"}`)
+  };
+}
+
 exports.handler = async (event) => {
   connectNetlifyBlobs(event);
   const data = await loadData();
@@ -511,35 +535,92 @@ exports.handler = async (event) => {
       requireAdmin(event, data);
       const body = parseBody(event);
       const rows = Array.isArray(body.events) ? body.events : [body];
+      const importId = Array.isArray(body.events) ? crypto.randomUUID() : "";
+      const existingKeys = new Set(data.calendarEvents.map(eventDuplicateKey));
+      let importedCount = 0;
+      let skippedDuplicateCount = 0;
+      let invalidCount = 0;
       for (const row of rows) {
-        if (!ymdToDateParts(row.date)) continue;
+        if (!ymdToDateParts(row.date)) {
+          invalidCount += 1;
+          continue;
+        }
         const existing = row.id ? data.calendarEvents.find((eventItem) => eventItem.id === row.id) : null;
         const eventItem = existing || { id: crypto.randomUUID(), createdAt: new Date().toISOString() };
-        Object.assign(eventItem, {
-          date: row.date,
-          startTime: row.startTime || data.config.bowlingStartTime,
-          practiceTime: row.practiceTime || data.config.practiceStartTime,
-          lane: row.lane || "",
-          location: row.location || "",
-          leagueName: row.leagueName || "",
-          opponent: row.opponent || "",
-          title: row.title || (row.leagueName ? `${row.leagueName}${row.opponent ? ` vs ${row.opponent}` : ""}` : `Bowling vs ${row.opponent || "TBD"}`)
-        });
-        if (!existing) data.calendarEvents.push(eventItem);
+        Object.assign(eventItem, normalizedCalendarRow(row, data));
+        if (!existing) {
+          const key = eventDuplicateKey(eventItem);
+          if (existingKeys.has(key)) {
+            skippedDuplicateCount += 1;
+            continue;
+          }
+          if (importId) eventItem.importId = importId;
+          existingKeys.add(key);
+          data.calendarEvents.push(eventItem);
+          importedCount += 1;
+        }
       }
       await saveData(data);
-      return json(200, { events: data.calendarEvents });
+      return json(200, {
+        events: data.calendarEvents,
+        importId: importedCount ? importId : "",
+        importedCount,
+        skippedDuplicateCount,
+        invalidCount
+      });
+    }
+
+    if (method === "POST" && route === "/calendar/events/delete-by-csv") {
+      requireAdmin(event, data);
+      const body = parseBody(event);
+      const rows = Array.isArray(body.events) ? body.events : [];
+      const deleteKeys = new Set();
+      let invalidCount = 0;
+      for (const row of rows) {
+        if (!ymdToDateParts(row.date)) {
+          invalidCount += 1;
+          continue;
+        }
+        deleteKeys.add(eventDuplicateKey(normalizedCalendarRow(row, data)));
+      }
+      const removedEventIds = new Set(data.calendarEvents.filter((eventItem) => deleteKeys.has(eventDuplicateKey(eventItem))).map((eventItem) => eventItem.id));
+      data.calendarEvents = data.calendarEvents.filter((eventItem) => !removedEventIds.has(eventItem.id));
+      data.subRequests = data.subRequests.filter((request) => !removedEventIds.has(request.eventId));
+      await saveData(data);
+      return json(200, {
+        events: data.calendarEvents,
+        subRequests: visibleSubRequests(data),
+        removedCount: removedEventIds.size,
+        invalidCount
+      });
+    }
+
+    if (method === "DELETE" && /^\/calendar\/imports\/[^/]+$/.test(route)) {
+      requireAdmin(event, data);
+      const importId = decodeURIComponent(route.split("/")[3]);
+      const removedEventIds = new Set(data.calendarEvents.filter((eventItem) => eventItem.importId === importId).map((eventItem) => eventItem.id));
+      if (!removedEventIds.size) return json(404, { error: "Imported schedule batch not found." });
+      data.calendarEvents = data.calendarEvents.filter((eventItem) => eventItem.importId !== importId);
+      data.subRequests = data.subRequests.filter((request) => !removedEventIds.has(request.eventId));
+      await saveData(data);
+      return json(200, {
+        events: data.calendarEvents,
+        subRequests: visibleSubRequests(data),
+        removedCount: removedEventIds.size
+      });
     }
 
     if (method === "DELETE" && /^\/calendar\/events\/[^/]+$/.test(route)) {
       requireAdmin(event, data);
       const eventId = decodeURIComponent(route.split("/")[3]);
-      const beforeCount = data.calendarEvents.length;
-      data.calendarEvents = data.calendarEvents.filter((eventItem) => eventItem.id !== eventId);
-      if (data.calendarEvents.length === beforeCount) return json(404, { error: "Calendar event not found." });
-      data.subRequests = data.subRequests.filter((request) => request.eventId !== eventId);
+      const target = data.calendarEvents.find((eventItem) => eventItem.id === eventId);
+      if (!target) return json(404, { error: "Calendar event not found." });
+      const targetKey = eventDuplicateKey(target);
+      const removedEventIds = new Set(data.calendarEvents.filter((eventItem) => eventDuplicateKey(eventItem) === targetKey).map((eventItem) => eventItem.id));
+      data.calendarEvents = data.calendarEvents.filter((eventItem) => !removedEventIds.has(eventItem.id));
+      data.subRequests = data.subRequests.filter((request) => !removedEventIds.has(request.eventId));
       await saveData(data);
-      return json(200, { events: data.calendarEvents, subRequests: visibleSubRequests(data) });
+      return json(200, { events: data.calendarEvents, subRequests: visibleSubRequests(data), removedCount: removedEventIds.size });
     }
 
     if (method === "POST" && route === "/sub-requests") {
@@ -609,6 +690,34 @@ exports.handler = async (event) => {
       data.weights.push({ id: crypto.randomUUID(), userId: user.id, weight, entryDate: body.date || centralParts(now).ymd, date: body.date || centralParts(now).ymd, createdAt: now.toISOString() });
       await saveData(data);
       return json(201, { weights: getUserWeights(data, user.id) });
+    }
+
+    if (method === "PUT" && /^\/weights\/[^/]+$/.test(route)) {
+      const user = requireUser(event, data);
+      const weightId = decodeURIComponent(route.split("/")[2]);
+      const entry = data.weights.find((candidate) => candidate.id === weightId);
+      const body = parseBody(event);
+      const weight = validateWeight(body.weight);
+      if (!entry) return json(404, { error: "Weight entry not found." });
+      if (entry.userId !== user.id && user.role !== "admin") return json(403, { error: "You can only edit your own weight entries." });
+      if (!weight || !ymdToDateParts(body.date)) return json(400, { error: "Enter a valid date and weight." });
+      entry.weight = weight;
+      entry.entryDate = body.date;
+      entry.date = body.date;
+      entry.updatedAt = new Date().toISOString();
+      await saveData(data);
+      return json(200, { weights: getUserWeights(data, user.id) });
+    }
+
+    if (method === "DELETE" && /^\/weights\/[^/]+$/.test(route)) {
+      const user = requireUser(event, data);
+      const weightId = decodeURIComponent(route.split("/")[2]);
+      const entry = data.weights.find((candidate) => candidate.id === weightId);
+      if (!entry) return json(404, { error: "Weight entry not found." });
+      if (entry.userId !== user.id && user.role !== "admin") return json(403, { error: "You can only delete your own weight entries." });
+      data.weights = data.weights.filter((candidate) => candidate.id !== weightId);
+      await saveData(data);
+      return json(200, { weights: getUserWeights(data, user.id) });
     }
 
     if (method === "POST" && /^\/admin\/users\/[^/]+\/weights$/.test(route)) {

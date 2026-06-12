@@ -75,7 +75,10 @@
               <p class="eyebrow">Calendar</p>
               <h2>Bowling schedule & subs</h2>
             </div>
-            <button id="downloadAllIcs" type="button" class="ghost">Add Season to Calendar</button>
+            <div class="row-actions">
+              <button id="downloadAllIcs" type="button" class="ghost">Add Season to Calendar</button>
+              <button id="downloadCancelIcs" type="button" class="ghost">Remove Season from Calendar</button>
+            </div>
           </div>
           <div class="calendar-toolbar">
             <button id="prevMonth" type="button" class="ghost small">Previous</button>
@@ -110,6 +113,31 @@
           </div>
         </section>
         <section class="panel">
+          <div class="section-heading">
+            <div>
+              <p id="boardEyebrow" class="eyebrow">Main Board</p>
+              <h2 id="boardTitle">Percentage weight loss</h2>
+              <p id="boardSubtitle" class="muted"></p>
+            </div>
+            <div id="boardModeControls" class="segmented" role="group" aria-label="Board view">
+              <button type="button" data-board-mode="main">Main</button>
+              <button type="button" data-board-mode="personal">Personal</button>
+            </div>
+          </div>
+          <form id="personalRangeForm" class="range-controls hidden">
+            <label>From <input name="fromDate" type="date"></label>
+            <label>To <input name="toDate" type="date"></label>
+            <button type="button" class="ghost small" id="clearPersonalRange">All entries</button>
+          </form>
+          <div id="chart" class="chart"></div>
+          <div class="table-wrap">
+            <table>
+              <thead id="boardHead"><tr><th>Rank</th><th>User</th><th>% Lost</th><th>Through</th></tr></thead>
+              <tbody id="leaderboard"></tbody>
+            </table>
+          </div>
+        </section>
+        <section class="panel">
           <p class="eyebrow">Your Weight Log</p>
           <h2>Add weight entry</h2>
           <form id="weightForm" class="form inline-form">
@@ -119,29 +147,11 @@
           </form>
           <div class="table-wrap">
             <table>
-              <thead><tr><th>Date</th><th>Weight</th><th>Logged</th></tr></thead>
+              <thead><tr><th>Date</th><th>Weight</th><th>Logged</th><th>Actions</th></tr></thead>
               <tbody id="myWeights"></tbody>
             </table>
           </div>
-        </section>
-        <section class="panel">
-          <div class="section-heading">
-            <div>
-              <p class="eyebrow">Main Board</p>
-              <h2>Percentage weight loss</h2>
-            </div>
-            <form id="rangeForm" class="range-controls">
-              <label>From <select name="fromWeek"></select></label>
-              <label>To <select name="toWeek"></select></label>
-            </form>
-          </div>
-          <div id="chart" class="chart"></div>
-          <div class="table-wrap">
-            <table>
-              <thead><tr><th>Rank</th><th>User</th><th>% Lost</th><th>Through</th></tr></thead>
-              <tbody id="leaderboard"></tbody>
-            </table>
-          </div>
+          <button id="toggleWeightLog" class="ghost small hidden" type="button">Show all entries</button>
         </section>
       </section>
 
@@ -156,6 +166,7 @@
             <label>Contest end <input name="contestEndDate" type="date"></label>
             <button type="submit">Save setup</button>
           </form>
+          <p id="configStatus" class="action-status hidden"></p>
         </section>
 
         <section class="panel">
@@ -164,8 +175,13 @@
           <p class="hint">CSV headers: Date, Location, League Name, Lane, Opponent, Start time, Practice Time, Location</p>
           <form id="csvForm" class="form">
             <label>Schedule CSV <input name="csv" type="file" accept=".csv,text/csv"></label>
-            <button type="submit">Upload schedule</button>
+            <div class="row-actions">
+              <button type="submit" name="csvAction" value="upload">Upload schedule</button>
+              <button class="danger" type="submit" name="csvAction" value="delete">Delete matching events</button>
+            </div>
           </form>
+          <div id="csvStatus" class="action-status hidden"></div>
+          <button id="undoCsvImport" type="button" class="ghost small hidden">Undo last upload</button>
         </section>
 
         <section class="panel">
@@ -177,6 +193,7 @@
             <label>Temp password <input name="password" type="text" value="changeme123" minlength="8" required></label>
             <button type="submit">Create user</button>
           </form>
+          <p id="userAdminStatus" class="action-status hidden"></p>
           <div class="table-wrap">
             <table>
               <thead><tr><th>User</th><th>Email</th><th>Role</th><th>Entries</th><th>Actions</th></tr></thead>

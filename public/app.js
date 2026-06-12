@@ -60,6 +60,17 @@ function importSummary(data) {
   return `Schedule upload complete: ${parts.join(", ")}.`;
 }
 
+function calendarEventKey(eventItem) {
+  return [
+    eventItem.date,
+    eventItem.lane,
+    eventItem.opponent,
+    eventItem.startTime || state.config.bowlingStartTime,
+    eventItem.practiceTime || state.config.practiceStartTime,
+    eventItem.location
+  ].map((value) => String(value || "").trim().toLowerCase()).join("|");
+}
+
 function urlBase64ToUint8Array(value) {
   const padding = "=".repeat((4 - value.length % 4) % 4);
   const base64 = (value + padding).replace(/-/g, "+").replace(/_/g, "/");
@@ -324,15 +335,22 @@ async function enablePushAlerts() {
 }
 
 async function disablePushAlerts() {
-  const registration = await pushRegistration();
-  const subscription = await registration.pushManager.getSubscription();
-  if (subscription) {
-    await api("/api/push/subscriptions", { method: "DELETE", body: JSON.stringify({ endpoint: subscription.endpoint }) });
-    await subscription.unsubscribe();
-  }
+  const previousSubscribed = state.pushSubscribed;
   state.pushSubscribed = false;
   renderPushControls("Sub alerts off.");
-  toast("Sub alerts disabled.");
+  const registration = await pushRegistration();
+  const subscription = await registration.pushManager.getSubscription();
+  try {
+    if (subscription) {
+      await api("/api/push/subscriptions", { method: "DELETE", body: JSON.stringify({ endpoint: subscription.endpoint }) });
+      await subscription.unsubscribe();
+    }
+    toast("Sub alerts disabled.");
+  } catch (error) {
+    state.pushSubscribed = previousSubscribed;
+    renderPushControls("Sub alerts still enabled.");
+    throw error;
+  }
 }
 
 function renderHome() {
@@ -892,6 +910,7 @@ $("#notesList").addEventListener("click", async (event) => {
   const del = event.target.closest("[data-delete-note]");
   const actionButton = edit || del;
   if (actionButton) actionButton.disabled = true;
+  let previousNotes = null;
   try {
     if (edit) {
       const note = state.notes.find((item) => item.id === edit.dataset.editNote);
@@ -905,13 +924,20 @@ $("#notesList").addEventListener("click", async (event) => {
     }
     if (del && confirm("Delete this blog entry and its replies?")) {
       const noteId = del.dataset.deleteNote;
-      await api(`/api/notes/${noteId}`, { method: "DELETE" });
+      previousNotes = [...state.notes];
       state.notes = state.notes.filter((note) => note.id !== noteId);
       renderHome();
+      await api(`/api/notes/${noteId}`, { method: "DELETE" });
       await refreshNotes();
+      state.notes = state.notes.filter((note) => note.id !== noteId);
+      renderHome();
       toast("Blog entry deleted.");
     }
   } catch (error) {
+    if (del && previousNotes) {
+      state.notes = previousNotes;
+      renderHome();
+    }
     toast(error.message);
   } finally {
     if (actionButton?.isConnected) actionButton.disabled = false;
@@ -940,18 +966,29 @@ $("#calendarList").addEventListener("click", async (event) => {
   const deleteEventButton = event.target.closest("[data-delete-event]");
   const editSubButton = event.target.closest("[data-edit-sub-request]");
   const deleteSubButton = event.target.closest("[data-delete-sub-request]");
-  const actionButton = subButton || responseButton || editSubButton || deleteSubButton;
+  const actionButton = subButton || responseButton || deleteEventButton || editSubButton || deleteSubButton;
   if (actionButton) actionButton.disabled = true;
+  let previousEvents = null;
+  let previousSubRequests = null;
+  let previousSelection = null;
   try {
     if (icsButton) {
       const eventItem = state.events.find((item) => item.id === icsButton.dataset.ics);
       if (eventItem) downloadText(`${formatDate(eventItem.date)}-bowling.ics`, eventsToIcs([eventItem]));
     }
     if (deleteEventButton && confirm("Remove this calendar event and any related sub requests?")) {
+      const eventId = deleteEventButton.dataset.deleteEvent;
+      previousEvents = [...state.events];
+      previousSubRequests = [...state.subRequests];
+      previousSelection = state.selectedCalendarEventId;
+      state.events = state.events.filter((eventItem) => eventItem.id !== eventId);
+      state.subRequests = state.subRequests.filter((request) => request.eventId !== eventId);
+      if (state.selectedCalendarEventId === eventId) state.selectedCalendarEventId = null;
+      renderHome();
+      renderCalendar();
       const data = await api(`/api/calendar/events/${deleteEventButton.dataset.deleteEvent}`, { method: "DELETE" });
-      state.events = data.events;
-      state.subRequests = data.subRequests;
-      if (state.selectedCalendarEventId === deleteEventButton.dataset.deleteEvent) state.selectedCalendarEventId = null;
+      state.events = data.events.filter((eventItem) => eventItem.id !== eventId);
+      state.subRequests = data.subRequests.filter((request) => request.eventId !== eventId);
       renderHome();
       renderCalendar();
       toast(`${data.removedCount || 1} calendar event${data.removedCount === 1 ? "" : "s"} removed.`);
@@ -986,17 +1023,36 @@ $("#calendarList").addEventListener("click", async (event) => {
     }
     if (deleteSubButton && confirm("Cancel this sub request?")) {
       const request = state.subRequests.find((item) => item.id === deleteSubButton.dataset.deleteSubRequest);
+      previousSubRequests = [...state.subRequests];
+      if (request) state.subRequests = state.subRequests.filter((item) => item.eventId !== request.eventId);
+      else state.subRequests = state.subRequests.filter((item) => item.id !== deleteSubButton.dataset.deleteSubRequest);
+      renderHome();
+      renderCalendar();
       const data = await api(`/api/sub-requests/${deleteSubButton.dataset.deleteSubRequest}`, { method: "DELETE" });
       if (request) state.subRequests = state.subRequests.filter((item) => item.eventId !== request.eventId);
       else state.subRequests = state.subRequests.filter((item) => item.id !== deleteSubButton.dataset.deleteSubRequest);
       renderHome();
       renderCalendar();
-      state.subRequests = data.subRequests;
+      state.subRequests = request
+        ? data.subRequests.filter((item) => item.eventId !== request.eventId)
+        : data.subRequests.filter((item) => item.id !== deleteSubButton.dataset.deleteSubRequest);
       renderHome();
       renderCalendar();
       toast(`${data.removedCount || 1} sub request${data.removedCount === 1 ? "" : "s"} canceled.`);
     }
   } catch (error) {
+    if (deleteEventButton && previousEvents && previousSubRequests) {
+      state.events = previousEvents;
+      state.subRequests = previousSubRequests;
+      state.selectedCalendarEventId = previousSelection;
+      renderHome();
+      renderCalendar();
+    }
+    if (deleteSubButton && previousSubRequests) {
+      state.subRequests = previousSubRequests;
+      renderHome();
+      renderCalendar();
+    }
     toast(error.message);
   } finally {
     if (actionButton?.isConnected) actionButton.disabled = false;
@@ -1150,13 +1206,29 @@ $("#csvForm").addEventListener("submit", async (event) => {
   if (!file) return toast("Choose a CSV file.");
   const action = event.submitter?.value || "upload";
   if (action === "delete" && !confirm("Delete matching schedule events from this CSV?")) return;
+  const submitter = event.submitter;
+  if (submitter) submitter.disabled = true;
+  const previousEvents = [...state.events];
+  const previousSubRequests = [...state.subRequests];
+  const previousImportId = state.lastImportId;
   try {
     const events = csvToEvents(await file.text());
+    const deleteKeys = new Set(events.map(calendarEventKey));
+    if (action === "delete") {
+      state.events = state.events.filter((eventItem) => !deleteKeys.has(calendarEventKey(eventItem)));
+      state.subRequests = state.subRequests.filter((request) => state.events.some((eventItem) => eventItem.id === request.eventId));
+      state.lastImportId = "";
+      updateUndoImportButton();
+      renderHome();
+      renderCalendar();
+    }
     const data = action === "delete"
       ? await api("/api/calendar/events/delete-by-csv", { method: "POST", body: JSON.stringify({ events }) })
       : await api("/api/calendar/events", { method: "POST", body: JSON.stringify({ events }) });
-    state.events = data.events;
-    state.subRequests = data.subRequests || state.subRequests;
+    state.events = action === "delete"
+      ? data.events.filter((eventItem) => !deleteKeys.has(calendarEventKey(eventItem)))
+      : data.events;
+    state.subRequests = (data.subRequests || state.subRequests).filter((request) => state.events.some((eventItem) => eventItem.id === request.eventId));
     state.lastImportId = action === "upload" ? (data.importId || "") : "";
     updateUndoImportButton();
     state.selectedCalendarEventId = selectedCalendarEvent() ? state.selectedCalendarEventId : null;
@@ -1169,28 +1241,52 @@ $("#csvForm").addEventListener("submit", async (event) => {
     form.reset();
     toast(message);
   } catch (error) {
+    state.events = previousEvents;
+    state.subRequests = previousSubRequests;
+    state.lastImportId = previousImportId;
+    updateUndoImportButton();
+    renderHome();
+    renderCalendar();
     setActionStatus("#csvStatus", error.message);
     toast(error.message);
+  } finally {
+    if (submitter?.isConnected) submitter.disabled = false;
   }
 });
 
 $("#undoCsvImport").addEventListener("click", async () => {
   if (!state.lastImportId) return;
   if (!confirm("Undo the last schedule CSV upload?")) return;
+  const button = $("#undoCsvImport");
+  const importId = state.lastImportId;
+  const previousEvents = [...state.events];
+  const previousSubRequests = [...state.subRequests];
+  const previousImportId = state.lastImportId;
+  button.disabled = true;
   try {
-    const data = await api(`/api/calendar/imports/${state.lastImportId}`, { method: "DELETE" });
-    state.events = data.events;
-    state.subRequests = data.subRequests;
+    state.events = state.events.filter((eventItem) => eventItem.importId !== importId);
+    state.subRequests = state.subRequests.filter((request) => state.events.some((eventItem) => eventItem.id === request.eventId));
     state.lastImportId = "";
     updateUndoImportButton();
     renderHome();
     renderCalendar();
+    const data = await api(`/api/calendar/imports/${importId}`, { method: "DELETE" });
+    state.events = data.events.filter((eventItem) => eventItem.importId !== importId);
+    state.subRequests = data.subRequests.filter((request) => state.events.some((eventItem) => eventItem.id === request.eventId));
     const message = `Last schedule upload undone: ${data.removedCount} event${data.removedCount === 1 ? "" : "s"} removed.`;
     setActionStatus("#csvStatus", message);
     toast(message);
   } catch (error) {
+    state.events = previousEvents;
+    state.subRequests = previousSubRequests;
+    state.lastImportId = previousImportId;
+    updateUndoImportButton();
+    renderHome();
+    renderCalendar();
     setActionStatus("#csvStatus", error.message);
     toast(error.message);
+  } finally {
+    if (button.isConnected) button.disabled = false;
   }
 });
 
@@ -1213,6 +1309,9 @@ $("#adminCreateUserForm").addEventListener("submit", async (event) => {
 $("#adminUsers").addEventListener("click", async (event) => {
   const reset = event.target.closest("[data-reset-user]");
   const del = event.target.closest("[data-delete-user]");
+  const actionButton = reset || del;
+  if (actionButton) actionButton.disabled = true;
+  let previousUsers = null;
   try {
     if (reset) {
       const password = prompt("Temporary password:", "changeme123");
@@ -1222,14 +1321,24 @@ $("#adminUsers").addEventListener("click", async (event) => {
       toast("Password reset.");
     }
     if (del && confirm("Delete this user and their weights?")) {
+      const userId = del.dataset.deleteUser;
+      previousUsers = [...state.adminUsers];
+      state.adminUsers = state.adminUsers.filter((user) => user.id !== userId);
+      renderAdmin();
       await api(`/api/admin/users/${del.dataset.deleteUser}`, { method: "DELETE" });
       await refreshAdmin();
       setActionStatus("#userAdminStatus", "User deleted.");
       toast("User deleted.");
     }
   } catch (error) {
+    if (del && previousUsers) {
+      state.adminUsers = previousUsers;
+      renderAdmin();
+    }
     setActionStatus("#userAdminStatus", error.message);
     toast(error.message);
+  } finally {
+    if (actionButton?.isConnected) actionButton.disabled = false;
   }
 });
 

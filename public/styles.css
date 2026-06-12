@@ -299,6 +299,31 @@ textarea:-webkit-autofill {
   gap: 0.55rem;
 }
 
+.note-photo-preview {
+  display: grid;
+  gap: 0.55rem;
+  justify-items: start;
+  padding: 0.7rem;
+  background: #f7f7f7;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+
+.note-photo-preview img,
+.note-photo {
+  display: block;
+  width: 100%;
+  max-height: 520px;
+  object-fit: contain;
+  background: #111111;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+
+.note-photo {
+  margin: 0.65rem 0;
+}
+
 .calendar-toolbar {
   display: grid;
   grid-template-columns: auto 1fr auto;

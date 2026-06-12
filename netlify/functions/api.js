@@ -887,10 +887,12 @@ exports.handler = async (event) => {
       const user = requireUser(event, data);
       const body = parseBody(event);
       const text = String(body.text || "").trim();
-      if (!text) return json(400, { error: "Note cannot be blank." });
-      data.notes.push({ id: crypto.randomUUID(), userId: user.id, username: user.username, text, comments: [], createdAt: new Date().toISOString() });
+      const photoDataUrl = normalizeScorePhoto(body.photoDataUrl);
+      if (!text && !photoDataUrl) return json(400, { error: "Note cannot be blank." });
+      const note = { id: crypto.randomUUID(), userId: user.id, username: user.username, text, photoDataUrl, comments: [], createdAt: new Date().toISOString() };
+      data.notes.push(note);
       await saveData(data);
-      return json(201, { notes: sortedNotes(data) });
+      return json(201, { notes: sortedNotes(data), note: normalizeNote(note) });
     }
 
     if (method === "PUT" && /^\/notes\/[^/]+$/.test(route)) {
@@ -926,7 +928,7 @@ exports.handler = async (event) => {
       note.comments.push(comment);
       await saveData(data);
       await sendBlogReplyNotification(data, note, comment);
-      return json(201, { notes: sortedNotes(data) });
+      return json(201, { notes: sortedNotes(data), comment });
     }
 
     if (method === "GET" && route === "/calendar/events") return json(200, { events: data.calendarEvents });

@@ -18,6 +18,7 @@ const state = {
   bowlerStats: [],
   editingScoreRecapId: "",
   scorePhotoDataUrl: "",
+  notePhotoDataUrl: "",
   editingCalendarEventId: "",
   calendarCursor: new Date().toISOString().slice(0, 7),
   selectedCalendarEventId: null,
@@ -416,6 +417,18 @@ function renderHome() {
   renderPushControls();
 }
 
+function renderNotePhotoPreview() {
+  const preview = $("#notePhotoPreview");
+  if (!preview) return;
+  preview.classList.toggle("hidden", !state.notePhotoDataUrl);
+  preview.innerHTML = state.notePhotoDataUrl
+    ? `
+      <img src="${state.notePhotoDataUrl}" alt="Blog post image preview">
+      <button class="small danger" type="button" data-clear-note-photo>Remove image</button>
+    `
+    : "";
+}
+
 function renderNote(note) {
   const adminControls = state.user?.role === "admin"
     ? `
@@ -444,7 +457,8 @@ function renderNote(note) {
         </div>
         ${adminControls}
       </div>
-      <p>${escapeHtml(note.text)}</p>
+      ${note.text ? `<p>${escapeHtml(note.text)}</p>` : ""}
+      ${note.photoDataUrl ? `<img class="note-photo" src="${note.photoDataUrl}" alt="Blog post image">` : ""}
       <div class="comments">
         ${comments}
         <form class="comment-form" data-comment-form="${note.id}">
@@ -1199,15 +1213,44 @@ $("#noteForm").addEventListener("submit", async (event) => {
   const submit = form.querySelector("button[type='submit']");
   if (submit) submit.disabled = true;
   try {
-    await api("/api/notes", { method: "POST", body: JSON.stringify(Object.fromEntries(new FormData(form))) });
+    const payload = Object.fromEntries(new FormData(form));
+    delete payload.photo;
+    payload.photoDataUrl = state.notePhotoDataUrl;
+    const data = await api("/api/notes", { method: "POST", body: JSON.stringify(payload) });
     form.reset();
-    await refreshNotes();
+    state.notePhotoDataUrl = "";
+    renderNotePhotoPreview();
+    if (data.note) state.notes = [data.note, ...state.notes.filter((note) => note.id !== data.note.id)];
+    else state.notes = data.notes || state.notes;
+    renderHome();
     toast("Blog note saved.");
   } catch (error) {
     toast(error.message);
   } finally {
     if (submit) submit.disabled = false;
   }
+});
+
+$("#noteForm").addEventListener("change", (event) => {
+  const input = event.target.closest("[name='photo']");
+  if (!input) return;
+  const file = input.files[0];
+  if (!file) return;
+  resizeScorePhoto(file)
+    .then((dataUrl) => {
+      state.notePhotoDataUrl = dataUrl;
+      renderNotePhotoPreview();
+      toast("Blog image ready.");
+    })
+    .catch((error) => toast(error.message));
+});
+
+$("#noteForm").addEventListener("click", (event) => {
+  if (!event.target.closest("[data-clear-note-photo]")) return;
+  state.notePhotoDataUrl = "";
+  const input = $("#noteForm input[name='photo']");
+  if (input) input.value = "";
+  renderNotePhotoPreview();
 });
 
 $("#notesList").addEventListener("click", async (event) => {
@@ -1253,14 +1296,40 @@ $("#notesList").addEventListener("submit", async (event) => {
   const form = event.target.closest("[data-comment-form]");
   if (!form) return;
   event.preventDefault();
+  const submit = form.querySelector("button[type='submit']");
+  if (submit?.disabled) return;
+  const text = String(new FormData(form).get("text") || "").trim();
+  if (!text) return toast("Reply cannot be blank.");
+  const noteId = form.dataset.commentForm;
+  const previousNotes = structuredClone(state.notes);
+  const optimisticComment = {
+    id: `pending-${Date.now()}`,
+    userId: state.user?.id || "",
+    username: state.user?.username || "You",
+    text,
+    createdAt: new Date().toISOString()
+  };
+  if (submit) submit.disabled = true;
   try {
-    const data = await api(`/api/notes/${form.dataset.commentForm}/comments`, { method: "POST", body: JSON.stringify(Object.fromEntries(new FormData(form))) });
-    state.notes = data.notes;
+    state.notes = state.notes.map((note) => note.id === noteId
+      ? { ...note, comments: [...(note.comments || []), optimisticComment] }
+      : note);
     form.reset();
     renderHome();
+    const data = await api(`/api/notes/${noteId}/comments`, { method: "POST", body: JSON.stringify({ text }) });
+    if (data.comment) {
+      state.notes = state.notes.map((note) => note.id === noteId
+        ? { ...note, comments: (note.comments || []).map((comment) => comment.id === optimisticComment.id ? data.comment : comment) }
+        : note);
+      renderHome();
+    }
     toast("Reply posted.");
   } catch (error) {
+    state.notes = previousNotes;
+    renderHome();
     toast(error.message);
+  } finally {
+    if (submit?.isConnected) submit.disabled = false;
   }
 });
 

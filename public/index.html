@@ -22,6 +22,7 @@
       <button data-view="home" type="button">Blog</button>
       <button data-view="calendar" type="button">Calendar</button>
       <button data-view="loser" type="button">Biggest Loser</button>
+      <button data-view="options" type="button" class="user-only hidden">Options</button>
       <button data-view="admin" type="button" class="admin-only hidden">Admin</button>
       <button id="menuAuthBtn" type="button">Login</button>
     </nav>
@@ -37,9 +38,11 @@
         </form>
         <form id="registerForm" class="form">
           <p class="eyebrow">New teammate</p>
+          <p class="hint">After signing up, open Options and enable Sub Alerts so you get notified when someone needs a sub.</p>
           <label>Email <input name="email" type="email" required></label>
           <label>Username <input name="username" type="text" required></label>
           <label>Password <input name="password" type="password" minlength="8" required></label>
+          <label class="check-row"><input name="enableSubAlerts" type="checkbox"> Enable Sub Alerts after signup</label>
           <label id="adminSetupCodeField" class="hidden">Admin setup code <input name="setupCode" type="text" placeholder="Only needed for first admin setup"></label>
           <button type="submit">Create account</button>
         </form>
@@ -63,13 +66,26 @@
             <label>Add a note <textarea name="text" rows="3" placeholder="Practice updates, sub notes, bowling chatter..."></textarea></label>
             <button type="submit">Post note</button>
           </form>
-          <div id="pushControls" class="row-actions hidden">
-            <button id="enablePush" type="button" class="ghost small">Enable Sub Alerts</button>
-            <button id="disablePush" type="button" class="ghost small hidden">Disable Sub Alerts</button>
-            <span id="pushStatus" class="muted"></span>
-          </div>
           <div id="subSummary" class="summary-list"></div>
           <div id="notesList" class="feed"></div>
+        </section>
+      </section>
+
+      <section id="optionsView" class="view hidden">
+        <section class="panel">
+          <p class="eyebrow">Options</p>
+          <h2>User options</h2>
+          <div class="settings-row">
+            <div>
+              <strong>Sub Alerts</strong>
+              <p class="muted">Get a push notification when someone needs a sub.</p>
+            </div>
+            <div id="pushControls" class="row-actions hidden">
+              <button id="enablePush" type="button" class="ghost small">Enable Sub Alerts</button>
+              <button id="disablePush" type="button" class="ghost small hidden">Disable Sub Alerts</button>
+              <span id="pushStatus" class="muted"></span>
+            </div>
+          </div>
         </section>
       </section>
 

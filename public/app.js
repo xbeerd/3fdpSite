@@ -116,11 +116,12 @@ async function openViewFromHash() {
 
 function viewFromHash() {
   const value = window.location.hash.replace("#", "");
-  return ["home", "calendar", "loser", "admin"].includes(value) ? value : "";
+  return ["home", "calendar", "loser", "options", "admin"].includes(value) ? value : "";
 }
 
 function renderShell() {
   const needsSetup = Boolean(state.user?.passwordSetupRequired);
+  $$(".user-only").forEach((node) => node.classList.toggle("hidden", !state.user));
   $$(".admin-only").forEach((node) => node.classList.toggle("hidden", state.user?.role !== "admin"));
   $("#menuAuthBtn").textContent = state.user ? "Log out" : "Login";
   $("#adminSetupCodeField").classList.toggle("hidden", !state.adminSetupOpen);
@@ -861,6 +862,8 @@ $("#registerForm").addEventListener("submit", async (event) => {
   event.preventDefault();
   const form = event.currentTarget;
   const formData = new FormData(form);
+  const enableSubAlerts = formData.get("enableSubAlerts") === "on";
+  formData.delete("enableSubAlerts");
   try {
     await api("/api/register", { method: "POST", body: JSON.stringify(Object.fromEntries(formData)) });
     const data = await api("/api/login", { method: "POST", body: JSON.stringify({ email: formData.get("email"), password: formData.get("password") }) });
@@ -869,6 +872,7 @@ $("#registerForm").addEventListener("submit", async (event) => {
     await refreshBootstrap();
     renderShell();
     toast("Account created.");
+    if (enableSubAlerts) await enablePushAlerts();
   } catch (error) {
     toast(error.message);
   }

@@ -704,6 +704,13 @@ function timeToIcs(time, fallback = "18:30") {
   return `${String(hour).padStart(2, "0")}${minute}00`;
 }
 
+function addMinutesToIcsTime(icsTime, minutesToAdd) {
+  const hour = Number(icsTime.slice(0, 2));
+  const minute = Number(icsTime.slice(2, 4));
+  const total = hour * 60 + minute + minutesToAdd;
+  return `${String(Math.floor(total / 60) % 24).padStart(2, "0")}${String(total % 60).padStart(2, "0")}00`;
+}
+
 function escapeIcs(value) {
   return String(value || "")
     .replace(/\\/g, "\\\\")
@@ -715,11 +722,13 @@ function escapeIcs(value) {
 function eventToIcsEntry(eventItem, method = "PUBLISH") {
   const date = eventItem.date.replaceAll("-", "");
   const practice = timeToIcs(eventItem.practiceTime || eventItem.startTime);
+  const end = addMinutesToIcsTime(practice, 210);
   return [
     "BEGIN:VEVENT",
     `UID:${eventItem.id}@3fdp`,
     `DTSTAMP:${new Date().toISOString().replace(/[-:]/g, "").split(".")[0]}Z`,
     `DTSTART:${date}T${practice}`,
+    `DTEND:${date}T${end}`,
     method === "CANCEL" ? "STATUS:CANCELLED" : "",
     method === "CANCEL" ? "SEQUENCE:1" : "",
     `SUMMARY:${escapeIcs(eventItem.title || "Bowling")}`,

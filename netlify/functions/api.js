@@ -30,7 +30,8 @@ const defaultData = {
   calendarEvents: [],
   subRequests: [],
   pushSubscriptions: [],
-  weights: []
+  weights: [],
+  scoreRecaps: []
 };
 
 function connectNetlifyBlobs(event) {
@@ -80,7 +81,8 @@ async function loadData() {
     calendarEvents: (stored || {}).calendarEvents || [],
     subRequests: (stored || {}).subRequests || [],
     pushSubscriptions: (stored || {}).pushSubscriptions || [],
-    weights: (stored || {}).weights || []
+    weights: (stored || {}).weights || [],
+    scoreRecaps: (stored || {}).scoreRecaps || []
   };
 
   return data;
@@ -371,6 +373,136 @@ function normalizedCalendarRow(row, data) {
     opponent: row.opponent || "",
     title: row.title || (row.leagueName ? `${row.leagueName}${row.opponent ? ` vs ${row.opponent}` : ""}` : `Bowling vs ${row.opponent || "TBD"}`)
   };
+}
+
+function normalizeScoreValue(value) {
+  if (value === "" || value === null || value === undefined) return null;
+  const score = Number(value);
+  return Number.isInteger(score) && score >= 0 && score <= 300 ? score : null;
+}
+
+function normalizeBoolean(value, fallback = false) {
+  if (value === undefined || value === null || value === "") return fallback;
+  if (typeof value === "boolean") return value;
+  return ["true", "1", "yes", "on"].includes(String(value).toLowerCase());
+}
+
+function scoreLineTotal(line) {
+  return [line.game1, line.game2, line.game3].reduce((sum, score) => sum + (Number(score) || 0), 0);
+}
+
+function normalizeScoreLine(line = {}) {
+  const bowlerName = String(line.bowlerName || "").trim();
+  const scores = {
+    game1: normalizeScoreValue(line.game1),
+    game2: normalizeScoreValue(line.game2),
+    game3: normalizeScoreValue(line.game3)
+  };
+  if (!bowlerName && Object.values(scores).every((score) => score === null)) return null;
+  if (!bowlerName || Object.values(scores).some((score) => score === null)) {
+    throw Object.assign(new Error("Each score row needs a bowler name and three valid games."), { statusCode: 400 });
+  }
+  const isSub = normalizeBoolean(line.isSub);
+  return {
+    id: line.id || crypto.randomUUID(),
+    bowlerName,
+    game1: scores.game1,
+    game2: scores.game2,
+    game3: scores.game3,
+    isSub,
+    paid: normalizeBoolean(line.paid, !isSub),
+    handicapOverride: line.handicapOverride === "" || line.handicapOverride === undefined || line.handicapOverride === null
+      ? null
+      : Math.max(0, Number(line.handicapOverride) || 0)
+  };
+}
+
+function normalizeScoreRecap(body, existing = {}) {
+  const date = String(body.date || "").trim();
+  if (!ymdToDateParts(date)) throw Object.assign(new Error("Enter a valid recap date."), { statusCode: 400 });
+  const ourTeamLines = (Array.isArray(body.ourTeamLines) ? body.ourTeamLines : []).map(normalizeScoreLine).filter(Boolean);
+  const opponentLines = (Array.isArray(body.opponentLines) ? body.opponentLines : []).map(normalizeScoreLine).filter(Boolean);
+  if (!ourTeamLines.length) throw Object.assign(new Error("Add at least one 3FDP bowler score row."), { statusCode: 400 });
+  return {
+    ...existing,
+    date,
+    week: body.week === "" || body.week === undefined ? "" : String(body.week).trim(),
+    ourTeamName: String(body.ourTeamName || "3 Finger Death Punch").trim(),
+    opponentTeamName: String(body.opponentTeamName || "").trim(),
+    ourTeamLines,
+    opponentLines,
+    notes: String(body.notes || "").trim()
+  };
+}
+
+function publicScoreRecap(recap, user = null) {
+  const lineWithTotal = (line) => ({ ...line, series: scoreLineTotal(line) });
+  const ourPins = [1, 2, 3].map((game) => recap.ourTeamLines.reduce((sum, line) => sum + line[`game${game}`], 0));
+  const opponentPins = [1, 2, 3].map((game) => recap.opponentLines.reduce((sum, line) => sum + line[`game${game}`], 0));
+  return {
+    ...recap,
+    canManage: Boolean(user && (user.role === "admin" || user.id === recap.createdByUserId)),
+    ourTeamLines: recap.ourTeamLines.map(lineWithTotal),
+    opponentLines: recap.opponentLines.map(lineWithTotal),
+    totals: {
+      ourPins,
+      opponentPins,
+      ourSeries: ourPins.reduce((sum, score) => sum + score, 0),
+      opponentSeries: opponentPins.reduce((sum, score) => sum + score, 0),
+      margins: ourPins.map((score, index) => opponentPins[index] ? score - opponentPins[index] : null),
+      seriesMargin: opponentPins.some(Boolean) ? ourPins.reduce((sum, score) => sum + score, 0) - opponentPins.reduce((sum, score) => sum + score, 0) : null
+    }
+  };
+}
+
+function scoreDashboard(data, user = null) {
+  const recaps = [...data.scoreRecaps].sort((a, b) => String(b.date).localeCompare(String(a.date)) || String(b.createdAt || "").localeCompare(String(a.createdAt || "")));
+  const bowlerMap = new Map();
+  for (const recap of [...data.scoreRecaps].sort((a, b) => String(a.date).localeCompare(String(b.date)))) {
+    for (const [teamType, lines] of [["our", recap.ourTeamLines || []], ["opponent", recap.opponentLines || []]]) {
+      for (const line of lines) {
+        const key = line.bowlerName.toLowerCase();
+        const current = bowlerMap.get(key) || {
+          bowlerName: line.bowlerName,
+          teamType,
+          weeksBowled: 0,
+          subWeeks: 0,
+          paidSubWeeks: 0,
+          prizeEligibleWeeks: 0,
+          games: 0,
+          pins: 0,
+          highGame: 0,
+          highSeries: 0,
+          lastDate: ""
+        };
+        const series = scoreLineTotal(line);
+        current.weeksBowled += 1;
+        current.subWeeks += line.isSub ? 1 : 0;
+        current.paidSubWeeks += line.isSub && line.paid ? 1 : 0;
+        current.prizeEligibleWeeks += (!line.isSub || line.paid) ? 1 : 0;
+        if (teamType === "our") {
+          current.games += 3;
+          current.pins += series;
+          current.highGame = Math.max(current.highGame, line.game1, line.game2, line.game3);
+          current.highSeries = Math.max(current.highSeries, series);
+        }
+        current.lastDate = recap.date;
+        current.teamType = current.teamType === "our" || teamType === "our" ? "our" : "opponent";
+        if (line.handicapOverride !== null && line.handicapOverride !== undefined) current.handicapOverride = line.handicapOverride;
+        bowlerMap.set(key, current);
+      }
+    }
+  }
+  const bowlers = [...bowlerMap.values()].map((bowler) => {
+    const average = bowler.games ? Number((bowler.pins / bowler.games).toFixed(2)) : null;
+    const calculatedHandicap = average === null ? null : Math.max(0, Math.floor((220 - average) * 0.9));
+    return {
+      ...bowler,
+      average,
+      handicap: bowler.handicapOverride ?? calculatedHandicap
+    };
+  }).sort((a, b) => (b.teamType === "our") - (a.teamType === "our") || String(a.bowlerName).localeCompare(String(b.bowlerName)));
+  return { recaps: recaps.map((recap) => publicScoreRecap(recap, user)), bowlers };
 }
 
 function pushConfigured() {
@@ -842,6 +974,50 @@ exports.handler = async (event) => {
       data.weights.push({ id: crypto.randomUUID(), userId, weight, week: body.week === "" ? null : Number(body.week), entryDate: body.date, date: body.date, createdByAdmin: true, createdAt: new Date().toISOString() });
       await saveData(data);
       return json(201, { ok: true });
+    }
+
+    if (method === "GET" && route === "/scores/dashboard") {
+      const user = requireUser(event, data);
+      return json(200, scoreDashboard(data, user));
+    }
+
+    if (method === "POST" && route === "/scores/recaps") {
+      const user = requireAdmin(event, data);
+      const recap = normalizeScoreRecap(parseBody(event));
+      Object.assign(recap, {
+        id: crypto.randomUUID(),
+        createdByUserId: user.id,
+        createdByUsername: user.username,
+        createdAt: new Date().toISOString()
+      });
+      data.scoreRecaps.push(recap);
+      await saveData(data);
+      return json(201, scoreDashboard(data, user));
+    }
+
+    if (method === "PUT" && /^\/scores\/recaps\/[^/]+$/.test(route)) {
+      const user = requireAdmin(event, data);
+      const recapId = decodeURIComponent(route.split("/")[3]);
+      const index = data.scoreRecaps.findIndex((recap) => recap.id === recapId);
+      if (index === -1) return json(404, { error: "Score recap not found." });
+      data.scoreRecaps[index] = normalizeScoreRecap(parseBody(event), {
+        ...data.scoreRecaps[index],
+        updatedAt: new Date().toISOString(),
+        updatedByUserId: user.id,
+        updatedByUsername: user.username
+      });
+      await saveData(data);
+      return json(200, scoreDashboard(data, user));
+    }
+
+    if (method === "DELETE" && /^\/scores\/recaps\/[^/]+$/.test(route)) {
+      const user = requireAdmin(event, data);
+      const recapId = decodeURIComponent(route.split("/")[3]);
+      const beforeCount = data.scoreRecaps.length;
+      data.scoreRecaps = data.scoreRecaps.filter((recap) => recap.id !== recapId);
+      if (beforeCount === data.scoreRecaps.length) return json(404, { error: "Score recap not found." });
+      await saveData(data);
+      return json(200, scoreDashboard(data, user));
     }
 
     if (method === "GET" && route === "/biggest-loser/dashboard") {

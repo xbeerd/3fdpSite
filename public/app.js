@@ -14,6 +14,9 @@ const state = {
   pushSubscribed: false,
   boardMode: "main",
   showAllWeights: false,
+  scoreRecaps: [],
+  bowlerStats: [],
+  editingScoreRecapId: "",
   calendarCursor: new Date().toISOString().slice(0, 7),
   selectedCalendarEventId: null,
   lastImportId: "",
@@ -117,7 +120,7 @@ async function openViewFromHash() {
 
 function viewFromHash() {
   const value = window.location.hash.replace("#", "");
-  return ["home", "calendar", "loser", "options", "admin"].includes(value) ? value : "";
+  return ["home", "calendar", "scores", "loser", "options", "admin"].includes(value) ? value : "";
 }
 
 function renderShell() {
@@ -252,6 +255,7 @@ async function refreshBootstrap() {
   renderCalendar();
   renderContestHeader();
   if (state.user) await refreshWeightsAndBoard();
+  if (state.user) await refreshScores();
   if (state.user) await refreshPushState();
   if (state.user?.role === "admin") await refreshAdmin();
 }
@@ -272,6 +276,14 @@ async function refreshBoardOnly() {
   state.schedule = dashboard.schedule;
   renderContestHeader();
   renderBoard();
+}
+
+async function refreshScores() {
+  if (!state.user) return;
+  const data = await api("/api/scores/dashboard");
+  state.scoreRecaps = data.recaps;
+  state.bowlerStats = data.bowlers;
+  renderScores();
 }
 
 async function refreshAdmin() {
@@ -671,6 +683,146 @@ function renderGraph(series) {
   $("#chart").innerHTML = `
     <div class="graph-wrap"><svg viewBox="0 0 ${width} ${height}" role="img">${grid}${labels}${lines}</svg></div>
     <div class="legend">${legend}</div>
+  `;
+}
+
+function blankScoreLine(isSub = false) {
+  return { bowlerName: "", game1: "", game2: "", game3: "", isSub, paid: !isSub };
+}
+
+function scoreLineFields(line, team, index) {
+  return `
+    <div class="score-line" data-score-team="${team}">
+      <label>Bowler <input name="bowlerName" type="text" value="${escapeHtml(line.bowlerName || "")}" placeholder="Bowler"></label>
+      <label>1st <input name="game1" type="number" min="0" max="300" value="${escapeHtml(line.game1 ?? "")}"></label>
+      <label>2nd <input name="game2" type="number" min="0" max="300" value="${escapeHtml(line.game2 ?? "")}"></label>
+      <label>3rd <input name="game3" type="number" min="0" max="300" value="${escapeHtml(line.game3 ?? "")}"></label>
+      <label>HDCP <input name="handicapOverride" type="number" min="0" max="300" value="${escapeHtml(line.handicapOverride ?? "")}" placeholder="Auto"></label>
+      <label class="check-row compact-check"><input name="isSub" type="checkbox" ${line.isSub ? "checked" : ""}> Sub</label>
+      <label class="check-row compact-check"><input name="paid" type="checkbox" ${line.paid === false ? "" : "checked"}> Paid</label>
+      <button class="ghost small" type="button" data-remove-score-line="${team}-${index}">Remove</button>
+    </div>
+  `;
+}
+
+function setScoreFormLines(ourLines = [], opponentLines = []) {
+  const our = ourLines.length ? ourLines : Array.from({ length: 5 }, () => blankScoreLine(false));
+  const opponent = opponentLines.length ? opponentLines : Array.from({ length: 5 }, () => blankScoreLine(false));
+  $("#ourScoreLines").innerHTML = our.map((line, index) => scoreLineFields(line, "our", index)).join("");
+  $("#opponentScoreLines").innerHTML = opponent.map((line, index) => scoreLineFields(line, "opponent", index)).join("");
+}
+
+function showScoreForm(recap = null) {
+  const form = $("#scoreRecapForm");
+  form.classList.remove("hidden");
+  state.editingScoreRecapId = recap?.id || "";
+  form.elements.date.value = recap?.date || todayYmd();
+  form.elements.week.value = recap?.week || "";
+  form.elements.ourTeamName.value = recap?.ourTeamName || "3 Finger Death Punch";
+  form.elements.opponentTeamName.value = recap?.opponentTeamName || "";
+  form.elements.notes.value = recap?.notes || "";
+  setScoreFormLines(recap?.ourTeamLines, recap?.opponentLines);
+  $("#newScoreRecap").textContent = state.editingScoreRecapId ? "Editing recap" : "New recap";
+}
+
+function hideScoreForm() {
+  state.editingScoreRecapId = "";
+  $("#scoreRecapForm").classList.add("hidden");
+  $("#scoreRecapForm").reset();
+  setScoreFormLines();
+  $("#newScoreRecap").textContent = "New recap";
+}
+
+function readScoreLines(team) {
+  return $$(`[data-score-team="${team}"]`).map((line) => ({
+    bowlerName: line.querySelector("[name='bowlerName']").value,
+    game1: line.querySelector("[name='game1']").value,
+    game2: line.querySelector("[name='game2']").value,
+    game3: line.querySelector("[name='game3']").value,
+    handicapOverride: line.querySelector("[name='handicapOverride']").value,
+    isSub: line.querySelector("[name='isSub']").checked,
+    paid: line.querySelector("[name='paid']").checked
+  })).filter((line) => line.bowlerName || line.game1 || line.game2 || line.game3);
+}
+
+function scoreFormPayload(form) {
+  const payload = Object.fromEntries(new FormData(form));
+  payload.ourTeamLines = readScoreLines("our");
+  payload.opponentLines = readScoreLines("opponent");
+  return payload;
+}
+
+function renderScores() {
+  $("#bowlerStats").innerHTML = state.bowlerStats.length
+    ? state.bowlerStats.map((bowler) => `
+      <tr>
+        <td>${escapeHtml(bowler.bowlerName)}</td>
+        <td>${bowler.teamType === "our" ? "3FDP" : "Opponent"}</td>
+        <td>${bowler.weeksBowled}</td>
+        <td>${bowler.subWeeks}</td>
+        <td>${bowler.paidSubWeeks}</td>
+        <td>${bowler.prizeEligibleWeeks}</td>
+        <td>${bowler.average === null ? "-" : bowler.average.toFixed(2)}</td>
+        <td>${bowler.handicap === null ? "-" : bowler.handicap}</td>
+      </tr>
+    `).join("")
+    : `<tr><td colspan="8" class="empty">No score recaps entered yet.</td></tr>`;
+
+  $("#scoreRecaps").innerHTML = state.scoreRecaps.length
+    ? state.scoreRecaps.map(renderScoreRecap).join("")
+    : `<p class="empty">No weekly recaps yet.</p>`;
+}
+
+function renderScoreTeam(lines, label) {
+  return `
+    <div class="score-card">
+      <h3>${escapeHtml(label)}</h3>
+      <div class="recap-grid recap-grid-head"><span>Bowler</span><span>1st</span><span>2nd</span><span>3rd</span><span>Total</span><span>Flags</span></div>
+      ${lines.length ? lines.map((line) => `
+        <div class="recap-grid">
+          <span>${escapeHtml(line.bowlerName)}</span>
+          <span>${line.game1}</span>
+          <span>${line.game2}</span>
+          <span>${line.game3}</span>
+          <span>${line.series}</span>
+          <span>${line.isSub ? `Sub${line.paid ? " paid" : " unpaid"}` : (line.paid ? "Paid" : "-")}</span>
+        </div>
+      `).join("") : `<p class="empty">No opponent scores captured.</p>`}
+    </div>
+  `;
+}
+
+function renderScoreRecap(recap) {
+  const adminControls = state.user?.role === "admin"
+    ? `
+      <div class="row-actions">
+        <button class="small ghost" type="button" data-edit-score-recap="${recap.id}">Edit</button>
+        <button class="small danger" type="button" data-delete-score-recap="${recap.id}">Delete</button>
+      </div>
+    `
+    : "";
+  const totals = recap.totals;
+  return `
+    <article class="score-recap" data-score-recap-id="${recap.id}">
+      <div class="score-recap-heading">
+        <div>
+          <p class="eyebrow">${escapeHtml(formatDate(recap.date))}${recap.week ? ` - Week ${escapeHtml(recap.week)}` : ""}</p>
+          <h3>${escapeHtml(recap.ourTeamName || "3FDP")} vs ${escapeHtml(recap.opponentTeamName || "Opponent")}</h3>
+          <p class="muted">Series ${totals.ourSeries}${totals.opponentSeries ? ` to ${totals.opponentSeries}` : ""}${totals.seriesMargin !== null ? ` (${totals.seriesMargin >= 0 ? "+" : ""}${totals.seriesMargin})` : ""}</p>
+        </div>
+        ${adminControls}
+      </div>
+      <div class="score-match-summary">
+        <span>Game 1: ${totals.ourPins[0]}${totals.opponentPins[0] ? ` / ${totals.opponentPins[0]} (${totals.margins[0] >= 0 ? "+" : ""}${totals.margins[0]})` : ""}</span>
+        <span>Game 2: ${totals.ourPins[1]}${totals.opponentPins[1] ? ` / ${totals.opponentPins[1]} (${totals.margins[1] >= 0 ? "+" : ""}${totals.margins[1]})` : ""}</span>
+        <span>Game 3: ${totals.ourPins[2]}${totals.opponentPins[2] ? ` / ${totals.opponentPins[2]} (${totals.margins[2] >= 0 ? "+" : ""}${totals.margins[2]})` : ""}</span>
+      </div>
+      ${recap.notes ? `<p class="admin-note"><strong>Admin note:</strong> ${escapeHtml(recap.notes)}</p>` : ""}
+      <div class="score-team-wrap">
+        ${renderScoreTeam(recap.ourTeamLines, recap.ourTeamName || "3FDP")}
+        ${renderScoreTeam(recap.opponentLines, recap.opponentTeamName || "Opponent")}
+      </div>
+    </article>
   `;
 }
 
@@ -1194,6 +1346,91 @@ $("#clearPersonalRange").addEventListener("click", () => {
 $("#toggleWeightLog").addEventListener("click", () => {
   state.showAllWeights = !state.showAllWeights;
   renderWeights();
+});
+
+$("#newScoreRecap").addEventListener("click", () => showScoreForm());
+
+$("#cancelScoreEdit").addEventListener("click", () => hideScoreForm());
+
+$("#scoreRecapForm").addEventListener("click", (event) => {
+  const add = event.target.closest("[data-add-score-line]");
+  const remove = event.target.closest("[data-remove-score-line]");
+  if (add) {
+    const target = add.dataset.addScoreLine === "our" ? $("#ourScoreLines") : $("#opponentScoreLines");
+    target.insertAdjacentHTML("beforeend", scoreLineFields(blankScoreLine(add.dataset.addScoreLine !== "our"), add.dataset.addScoreLine, target.children.length));
+  }
+  if (remove) {
+    const line = remove.closest(".score-line");
+    if (line) line.remove();
+  }
+});
+
+$("#scoreRecapForm").addEventListener("change", (event) => {
+  const checkbox = event.target.closest("[name='isSub']");
+  if (!checkbox) return;
+  const line = checkbox.closest(".score-line");
+  const paid = line?.querySelector("[name='paid']");
+  if (paid && checkbox.checked && paid.checked) paid.checked = false;
+  if (paid && !checkbox.checked && !paid.checked) paid.checked = true;
+});
+
+$("#scoreRecapForm").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const form = event.currentTarget;
+  const submit = form.querySelector("button[type='submit']");
+  if (submit) submit.disabled = true;
+  try {
+    const method = state.editingScoreRecapId ? "PUT" : "POST";
+    const path = state.editingScoreRecapId ? `/api/scores/recaps/${state.editingScoreRecapId}` : "/api/scores/recaps";
+    const data = await api(path, { method, body: JSON.stringify(scoreFormPayload(form)) });
+    state.scoreRecaps = data.recaps;
+    state.bowlerStats = data.bowlers;
+    hideScoreForm();
+    renderScores();
+    setActionStatus("#scoreStatus", "Score recap saved.");
+    toast("Score recap saved.");
+  } catch (error) {
+    setActionStatus("#scoreStatus", error.message);
+    toast(error.message);
+  } finally {
+    if (submit?.isConnected) submit.disabled = false;
+  }
+});
+
+$("#scoreRecaps").addEventListener("click", async (event) => {
+  const edit = event.target.closest("[data-edit-score-recap]");
+  const del = event.target.closest("[data-delete-score-recap]");
+  if (!edit && !del) return;
+  const actionButton = edit || del;
+  actionButton.disabled = true;
+  const previousRecaps = [...state.scoreRecaps];
+  const previousBowlers = [...state.bowlerStats];
+  try {
+    if (edit) {
+      const recap = state.scoreRecaps.find((item) => item.id === edit.dataset.editScoreRecap);
+      if (recap) showScoreForm(recap);
+      return;
+    }
+    if (del && confirm("Delete this score recap?")) {
+      const recapId = del.dataset.deleteScoreRecap;
+      state.scoreRecaps = state.scoreRecaps.filter((recap) => recap.id !== recapId);
+      renderScores();
+      const data = await api(`/api/scores/recaps/${recapId}`, { method: "DELETE" });
+      state.scoreRecaps = data.recaps;
+      state.bowlerStats = data.bowlers;
+      renderScores();
+      setActionStatus("#scoreStatus", "Score recap deleted.");
+      toast("Score recap deleted.");
+    }
+  } catch (error) {
+    state.scoreRecaps = previousRecaps;
+    state.bowlerStats = previousBowlers;
+    renderScores();
+    setActionStatus("#scoreStatus", error.message);
+    toast(error.message);
+  } finally {
+    if (actionButton?.isConnected) actionButton.disabled = false;
+  }
 });
 
 $("#configForm").addEventListener("submit", async (event) => {

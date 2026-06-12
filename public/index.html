@@ -21,6 +21,7 @@
     <nav id="menu" class="menu hidden">
       <button data-view="home" type="button">Blog</button>
       <button data-view="calendar" type="button">Calendar</button>
+      <button data-view="scores" type="button">Scores</button>
       <button data-view="loser" type="button">Biggest Loser</button>
       <button data-view="options" type="button" class="user-only hidden">Options</button>
       <button data-view="admin" type="button" class="admin-only hidden">Admin</button>
@@ -177,6 +178,66 @@
             </table>
           </div>
           <button id="toggleWeightLog" class="ghost small hidden" type="button">Show all entries</button>
+        </section>
+      </section>
+
+      <section id="scoresView" class="view hidden">
+        <section class="panel">
+          <div class="section-heading">
+            <div>
+              <p class="eyebrow">Scores</p>
+              <h2>Weekly recaps</h2>
+              <p class="muted">Raw games are stored. Series, averages, handicaps, and margins are calculated.</p>
+            </div>
+            <button id="newScoreRecap" class="admin-only hidden" type="button">New recap</button>
+          </div>
+          <form id="scoreRecapForm" class="form score-form admin-only hidden">
+            <div class="inline-form">
+              <label>Date <input name="date" type="date" required></label>
+              <label>Week <input name="week" type="text" placeholder="1"></label>
+              <label>Our team <input name="ourTeamName" type="text" value="3 Finger Death Punch"></label>
+              <label>Opponent <input name="opponentTeamName" type="text" placeholder="Opponent"></label>
+            </div>
+            <div class="score-entry-grid">
+              <div>
+                <div class="score-grid-heading">
+                  <h3>3FDP</h3>
+                  <button class="ghost small" type="button" data-add-score-line="our">Add bowler</button>
+                </div>
+                <div id="ourScoreLines" class="score-lines"></div>
+              </div>
+              <div>
+                <div class="score-grid-heading">
+                  <h3>Opponent</h3>
+                  <button class="ghost small" type="button" data-add-score-line="opponent">Add bowler</button>
+                </div>
+                <div id="opponentScoreLines" class="score-lines"></div>
+              </div>
+            </div>
+            <label>Admin note <textarea name="notes" rows="2" placeholder="Subs, payment notes, or recap context"></textarea></label>
+            <div class="row-actions">
+              <button type="submit">Save recap</button>
+              <button id="cancelScoreEdit" class="ghost" type="button">Cancel</button>
+            </div>
+          </form>
+          <p id="scoreStatus" class="action-status hidden"></p>
+        </section>
+
+        <section class="panel">
+          <p class="eyebrow">Bowler Log</p>
+          <h2>Weeks, subs, and averages</h2>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Bowler</th><th>Team</th><th>Weeks</th><th>Sub Weeks</th><th>Paid Subs</th><th>Prize Weeks</th><th>Average</th><th>HDCP</th></tr></thead>
+              <tbody id="bowlerStats"></tbody>
+            </table>
+          </div>
+        </section>
+
+        <section class="panel">
+          <p class="eyebrow">Recap Log</p>
+          <h2>Matches</h2>
+          <div id="scoreRecaps" class="score-recaps"></div>
         </section>
       </section>
 

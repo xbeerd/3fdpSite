@@ -18,6 +18,7 @@ const state = {
   bowlerStats: [],
   editingScoreRecapId: "",
   scorePhotoDataUrl: "",
+  editingCalendarEventId: "",
   calendarCursor: new Date().toISOString().slice(0, 7),
   selectedCalendarEventId: null,
   lastImportId: "",
@@ -461,6 +462,35 @@ function renderCalendar() {
   $("#calendarList").innerHTML = renderSelectedCalendarEvent();
 }
 
+function resetCalendarEventForm() {
+  const form = $("#quickEventForm");
+  if (!form) return;
+  state.editingCalendarEventId = "";
+  form.reset();
+  form.elements.date.value = todayYmd();
+  form.elements.startTime.value = state.config.bowlingStartTime || "";
+  form.elements.practiceTime.value = state.config.practiceStartTime || "";
+  form.querySelector("button[type='submit']").textContent = "Add event";
+  $("#cancelEventEdit")?.classList.add("hidden");
+}
+
+function editCalendarEvent(eventId) {
+  const eventItem = state.events.find((item) => item.id === eventId);
+  const form = $("#quickEventForm");
+  if (!eventItem || !form) return toast("Calendar event not found.");
+  state.editingCalendarEventId = eventId;
+  form.elements.date.value = eventItem.date || "";
+  form.elements.title.value = eventItem.title || "";
+  form.elements.location.value = eventItem.location || "";
+  form.elements.lane.value = eventItem.lane || "";
+  form.elements.opponent.value = eventItem.opponent || "";
+  form.elements.startTime.value = eventItem.startTime || "";
+  form.elements.practiceTime.value = eventItem.practiceTime || "";
+  form.querySelector("button[type='submit']").textContent = "Save event";
+  $("#cancelEventEdit")?.classList.remove("hidden");
+  form.scrollIntoView({ behavior: "smooth", block: "start" });
+}
+
 function renderSelectedCalendarEvent() {
   const eventItem = selectedCalendarEvent();
   if (!state.events.length) return `<p class="empty">No schedule loaded yet.</p>`;
@@ -468,7 +498,10 @@ function renderSelectedCalendarEvent() {
   const request = state.subRequests.find((item) => item.eventId === eventItem.id);
   const recap = scoreRecapForDate(eventItem.date);
   const adminControls = state.user?.role === "admin"
-    ? `<button class="small danger" type="button" data-delete-event="${eventItem.id}">Remove event</button>`
+    ? `
+      <button class="small ghost" type="button" data-edit-event="${eventItem.id}">Edit event</button>
+      <button class="small danger" type="button" data-delete-event="${eventItem.id}">Remove event</button>
+    `
     : "";
   return `
     <article id="event-${eventItem.id}" class="event-card">
@@ -1197,10 +1230,11 @@ $("#calendarList").addEventListener("click", async (event) => {
   const responseButton = event.target.closest("[data-sub-response]");
   const icsButton = event.target.closest("[data-ics]");
   const viewRecapButton = event.target.closest("[data-view-score-recap]");
+  const editEventButton = event.target.closest("[data-edit-event]");
   const deleteEventButton = event.target.closest("[data-delete-event]");
   const editSubButton = event.target.closest("[data-edit-sub-request]");
   const deleteSubButton = event.target.closest("[data-delete-sub-request]");
-  const actionButton = subButton || responseButton || viewRecapButton || deleteEventButton || editSubButton || deleteSubButton;
+  const actionButton = subButton || responseButton || viewRecapButton || editEventButton || deleteEventButton || editSubButton || deleteSubButton;
   if (actionButton) actionButton.disabled = true;
   let previousEvents = null;
   let previousSubRequests = null;
@@ -1212,6 +1246,10 @@ $("#calendarList").addEventListener("click", async (event) => {
     }
     if (viewRecapButton) {
       showScoreRecap(viewRecapButton.dataset.viewScoreRecap);
+      return;
+    }
+    if (editEventButton) {
+      editCalendarEvent(editEventButton.dataset.editEvent);
       return;
     }
     if (deleteEventButton && confirm("Remove this calendar event and any related sub requests?")) {
@@ -1315,17 +1353,23 @@ $("#downloadCancelIcs").addEventListener("click", () => {
   downloadText("3fdp-season-cancel.ics", eventsToIcs(state.events, "CANCEL"));
 });
 
+$("#cancelEventEdit").addEventListener("click", () => resetCalendarEventForm());
+
 $("#quickEventForm").addEventListener("submit", async (event) => {
   event.preventDefault();
   const form = event.currentTarget;
   try {
     const payload = Object.fromEntries(new FormData(form));
+    const editingEventId = state.editingCalendarEventId;
     payload.title = String(payload.title || "").trim() || (payload.opponent ? `Bowling vs ${payload.opponent}` : "Bowling");
+    if (editingEventId) payload.id = editingEventId;
     const data = await api("/api/calendar/events", { method: "POST", body: JSON.stringify(payload) });
     state.events = data.events;
-    state.selectedCalendarEventId = [...state.events].sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)))[0]?.id || state.selectedCalendarEventId;
+    state.selectedCalendarEventId = editingEventId || [...state.events].sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)))[0]?.id || state.selectedCalendarEventId;
+    if (editingEventId) state.calendarCursor = String(payload.date || "").slice(0, 7) || state.calendarCursor;
+    resetCalendarEventForm();
     renderCalendar();
-    toast(data.skippedDuplicateCount ? "Duplicate event skipped." : "Calendar event added.");
+    toast(editingEventId ? "Calendar event updated." : (data.skippedDuplicateCount ? "Duplicate event skipped." : "Calendar event added."));
   } catch (error) {
     toast(error.message);
   }

@@ -442,6 +442,7 @@ textarea:-webkit-autofill {
 table { width: 100%; border-collapse: collapse; min-width: 560px; }
 th, td { padding: 0.85rem 0.7rem; border-bottom: 1px solid var(--line); text-align: left; }
 th { color: var(--muted); font-size: 0.76rem; text-transform: uppercase; }
+td .muted { display: block; margin-top: 0.2rem; font-size: 0.8rem; }
 .empty { color: var(--muted); text-align: center; }
 
 .action-status {

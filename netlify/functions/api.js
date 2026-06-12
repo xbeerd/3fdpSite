@@ -145,6 +145,7 @@ function publicUser(user) {
     id: user.id,
     email: user.email,
     username: user.username,
+    recapName: user.recapName || "",
     role: user.role,
     passwordSetupRequired: Boolean(user.passwordSetupRequired),
     createdAt: user.createdAt
@@ -693,6 +694,16 @@ exports.handler = async (event) => {
       user.passwordHash = hash;
       user.passwordSetupRequired = false;
       if (email) user.email = email;
+      await saveData(data);
+      return json(200, { user: publicUser(user) });
+    }
+
+    if (method === "PUT" && route === "/profile") {
+      const user = requireUser(event, data);
+      const body = parseBody(event);
+      const recapName = String(body.recapName || "").trim();
+      if (recapName.length > 80) return json(400, { error: "Recap sheet name is too long." });
+      user.recapName = recapName;
       await saveData(data);
       return json(200, { user: publicUser(user) });
     }

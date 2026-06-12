@@ -273,6 +273,7 @@ async function refreshBootstrap() {
   renderHome();
   renderCalendar();
   renderContestHeader();
+  renderProfileOptions();
   if (state.user) await refreshWeightsAndBoard();
   if (state.user) await refreshScores();
   if (state.user) await refreshPushState();
@@ -330,6 +331,12 @@ function renderPushControls(message = "") {
   $("#enablePush").classList.toggle("hidden", state.pushSubscribed);
   $("#disablePush").classList.toggle("hidden", !state.pushSubscribed);
   $("#pushStatus").textContent = message || (state.pushSubscribed ? "Sub alerts enabled." : "Sub alerts off.");
+}
+
+function renderProfileOptions() {
+  const form = $("#profileForm");
+  if (!form || !state.user) return;
+  form.elements.recapName.value = state.user.recapName || "";
 }
 
 async function pushRegistration() {
@@ -934,7 +941,7 @@ function renderAdmin() {
   $("#adminUsers").innerHTML = state.adminUsers.map((user) => `
     <tr>
       <td>${escapeHtml(user.username)}</td>
-      <td>${escapeHtml(user.email)}</td>
+      <td>${escapeHtml(user.email)}${user.recapName ? `<span class="muted">Recap: ${escapeHtml(user.recapName)}</span>` : ""}</td>
       <td>${escapeHtml(user.role)}</td>
       <td>${user.weightsEntered.length}</td>
       <td class="row-actions">
@@ -1104,6 +1111,21 @@ $("#enablePush").addEventListener("click", () => enablePushAlerts().catch((error
 $("#disablePush").addEventListener("click", () => disablePushAlerts().catch((error) => toast(error.message)));
 $("#prevMonth").addEventListener("click", () => moveCalendarMonth(-1));
 $("#nextMonth").addEventListener("click", () => moveCalendarMonth(1));
+
+$("#profileForm").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const form = event.currentTarget;
+  try {
+    const data = await api("/api/profile", { method: "PUT", body: JSON.stringify(Object.fromEntries(new FormData(form))) });
+    state.user = data.user;
+    renderProfileOptions();
+    setActionStatus("#profileStatus", "Options saved.");
+    toast("Options saved.");
+  } catch (error) {
+    setActionStatus("#profileStatus", error.message);
+    toast(error.message);
+  }
+});
 
 $("#loginForm").addEventListener("submit", async (event) => {
   event.preventDefault();

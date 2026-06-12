@@ -229,6 +229,23 @@ function selectedCalendarEvent() {
   return state.events.find((eventItem) => eventItem.id === state.selectedCalendarEventId) || null;
 }
 
+function scoreRecapForDate(date) {
+  return state.scoreRecaps.find((recap) => recap.date === date) || null;
+}
+
+function showScoreRecap(recapId) {
+  const recap = state.scoreRecaps.find((item) => item.id === recapId);
+  if (!recap) return toast("Score recap not found.");
+  setView("scores");
+  renderScores();
+  const node = document.querySelector(`[data-score-recap-id="${CSS.escape(recapId)}"]`);
+  if (node) {
+    node.classList.add("is-highlighted");
+    node.scrollIntoView({ behavior: "smooth", block: "start" });
+    setTimeout(() => node.classList.remove("is-highlighted"), 2800);
+  }
+}
+
 function ensureSelectedCalendarEvent() {
   if (selectedCalendarEvent()) return;
   const today = todayYmd();
@@ -449,6 +466,7 @@ function renderSelectedCalendarEvent() {
   if (!state.events.length) return `<p class="empty">No schedule loaded yet.</p>`;
   if (!eventItem) return `<p class="empty">Select an event on the calendar to view details.</p>`;
   const request = state.subRequests.find((item) => item.eventId === eventItem.id);
+  const recap = scoreRecapForDate(eventItem.date);
   const adminControls = state.user?.role === "admin"
     ? `<button class="small danger" type="button" data-delete-event="${eventItem.id}">Remove event</button>`
     : "";
@@ -463,6 +481,7 @@ function renderSelectedCalendarEvent() {
       </div>
       <div class="row-actions">
         <button class="small ghost" type="button" data-ics="${eventItem.id}">Add to Calendar</button>
+        ${recap ? `<button class="small ghost" type="button" data-view-score-recap="${recap.id}">View recap</button>` : ""}
         <button class="small" type="button" data-sub-request="${eventItem.id}">Need a sub</button>
         ${adminControls}
       </div>
@@ -1171,10 +1190,11 @@ $("#calendarList").addEventListener("click", async (event) => {
   const subButton = event.target.closest("[data-sub-request]");
   const responseButton = event.target.closest("[data-sub-response]");
   const icsButton = event.target.closest("[data-ics]");
+  const viewRecapButton = event.target.closest("[data-view-score-recap]");
   const deleteEventButton = event.target.closest("[data-delete-event]");
   const editSubButton = event.target.closest("[data-edit-sub-request]");
   const deleteSubButton = event.target.closest("[data-delete-sub-request]");
-  const actionButton = subButton || responseButton || deleteEventButton || editSubButton || deleteSubButton;
+  const actionButton = subButton || responseButton || viewRecapButton || deleteEventButton || editSubButton || deleteSubButton;
   if (actionButton) actionButton.disabled = true;
   let previousEvents = null;
   let previousSubRequests = null;
@@ -1183,6 +1203,10 @@ $("#calendarList").addEventListener("click", async (event) => {
     if (icsButton) {
       const eventItem = state.events.find((item) => item.id === icsButton.dataset.ics);
       if (eventItem) downloadText(`${formatDate(eventItem.date)}-bowling.ics`, eventsToIcs([eventItem]));
+    }
+    if (viewRecapButton) {
+      showScoreRecap(viewRecapButton.dataset.viewScoreRecap);
+      return;
     }
     if (deleteEventButton && confirm("Remove this calendar event and any related sub requests?")) {
       const eventId = deleteEventButton.dataset.deleteEvent;

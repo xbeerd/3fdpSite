@@ -549,6 +549,11 @@ th { color: var(--muted); font-size: 0.76rem; text-transform: uppercase; }
   border-radius: 8px;
 }
 
+.score-recap.is-highlighted {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px rgba(244, 123, 32, 0.28), var(--shadow);
+}
+
 .score-match-summary {
   display: flex;
   flex-wrap: wrap;

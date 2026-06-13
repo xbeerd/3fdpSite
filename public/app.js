@@ -954,21 +954,56 @@ function renderScoreWeekFilter() {
   select.innerHTML = `<option value="">All weeks</option>${weeks.map((week) => `<option value="${escapeHtml(week)}" ${week === state.selectedScoreWeek ? "selected" : ""}>Week ${escapeHtml(week)}</option>`).join("")}`;
 }
 
+function resultClass(margin, isOpponent = false) {
+  if (margin === null || margin === 0) return "is-tie";
+  const won = isOpponent ? margin < 0 : margin > 0;
+  return won ? "is-win" : "is-loss";
+}
+
+function renderScoreSummaryRow(label, gameScores = [], series, options = {}) {
+  const cells = gameScores.map((score, index) => {
+    const className = options.resultRow ? ` class="${resultClass(options.margins[index], options.isOpponent)}"` : "";
+    return `<span${className}>${score || "-"}</span>`;
+  }).join("");
+  const seriesClass = options.resultRow && options.seriesMargin !== null
+    ? ` class="${resultClass(options.seriesMargin, options.isOpponent)}"`
+    : "";
+  return `
+    <div class="recap-grid no-flags recap-summary-row ${options.firstSummary ? "recap-summary-start" : ""} ${options.resultRow ? "recap-total-row" : ""}">
+      <span>${escapeHtml(label)}</span>
+      ${cells}
+      <span${seriesClass}>${series || "-"}</span>
+    </div>
+  `;
+}
+
 function renderScoreTeam(lines, label, options = {}) {
+  const totals = options.totals || {};
+  const pins = options.isOpponent ? totals.opponentPins : totals.ourPins;
+  const handicap = options.isOpponent ? totals.opponentHandicap : totals.ourHandicap;
+  const withHandicap = options.isOpponent ? totals.opponentWithHandicap : totals.ourWithHandicap;
+  const series = (values = []) => values.reduce((sum, score) => sum + (Number(score) || 0), 0);
   return `
     <div class="score-card">
       <h3>${escapeHtml(label)}</h3>
-      <div class="recap-grid ${options.hideFlags ? "no-flags" : ""} recap-grid-head"><span>Bowler</span><span>1st</span><span>2nd</span><span>3rd</span><span>Total</span>${options.hideFlags ? "" : "<span>Flags</span>"}</div>
+      <div class="recap-grid no-flags recap-grid-head"><span>Bowler</span><span>1st</span><span>2nd</span><span>3rd</span><span>Total</span></div>
       ${lines.length ? lines.map((line) => `
-        <div class="recap-grid ${options.hideFlags ? "no-flags" : ""}">
+        <div class="recap-grid no-flags">
           <span>${escapeHtml(line.bowlerName)}</span>
           <span>${line.game1}</span>
           <span>${line.game2}</span>
           <span>${line.game3}</span>
           <span>${line.series}</span>
-          ${options.hideFlags ? "" : `<span>${line.isSub ? `Sub${line.paid ? " paid" : " unpaid"}` : (line.paid ? "Paid" : "-")}</span>`}
         </div>
       `).join("") : `<p class="empty">No opponent scores captured.</p>`}
+      ${renderScoreSummaryRow("Pins", pins, series(pins), { firstSummary: true })}
+      ${renderScoreSummaryRow("+HDCP", handicap, series(handicap))}
+      ${renderScoreSummaryRow("Totals", withHandicap, series(withHandicap), {
+        resultRow: true,
+        margins: totals.margins || [],
+        seriesMargin: totals.seriesMargin,
+        isOpponent: options.isOpponent
+      })}
     </div>
   `;
 }
@@ -984,11 +1019,6 @@ function renderScoreRecap(recap) {
     `
     : "";
   const totals = recap.totals;
-  const gameResult = (index) => {
-    const margin = totals.margins[index];
-    if (margin === null) return "";
-    return margin > 0 ? "Won" : margin < 0 ? "Lost" : "Tie";
-  };
   return `
     <article class="score-recap" data-score-recap-id="${recap.id}">
       <div class="score-recap-heading">
@@ -999,16 +1029,11 @@ function renderScoreRecap(recap) {
         </div>
         ${adminControls}
       </div>
-      <div class="score-match-summary">
-        <span>Game 1: ${totals.ourWithHandicap[0]}${totals.opponentWithHandicap[0] ? ` / ${totals.opponentWithHandicap[0]} (${gameResult(0)})` : ""}</span>
-        <span>Game 2: ${totals.ourWithHandicap[1]}${totals.opponentWithHandicap[1] ? ` / ${totals.opponentWithHandicap[1]} (${gameResult(1)})` : ""}</span>
-        <span>Game 3: ${totals.ourWithHandicap[2]}${totals.opponentWithHandicap[2] ? ` / ${totals.opponentWithHandicap[2]} (${gameResult(2)})` : ""}</span>
-      </div>
       ${recap.notes ? `<p class="admin-note"><strong>Admin note:</strong> ${escapeHtml(recap.notes)}</p>` : ""}
       ${recap.photoDataUrl ? `<details class="score-photo-details"><summary>View image</summary><img class="score-photo" src="${recap.photoDataUrl}" alt="Recap photo for ${escapeHtml(formatDate(recap.date))}"></details>` : ""}
       <div class="score-team-wrap">
-        ${renderScoreTeam(recap.ourTeamLines, recap.ourTeamName || "3FDP")}
-        ${renderScoreTeam(recap.opponentLines, recap.opponentTeamName || "Opponent", { hideFlags: true })}
+        ${renderScoreTeam(recap.ourTeamLines, recap.ourTeamName || "3FDP", { totals })}
+        ${renderScoreTeam(recap.opponentLines, recap.opponentTeamName || "Opponent", { totals, isOpponent: true })}
       </div>
     </article>
   `;

@@ -643,15 +643,15 @@ td .muted { display: block; margin-top: 0.2rem; font-size: 0.8rem; }
   color: var(--text);
 }
 
-.recap-total-row .is-win {
+.recap-total-row span.is-win {
   color: #167a3a;
 }
 
-.recap-total-row .is-loss {
+.recap-total-row span.is-loss {
   color: #b42318;
 }
 
-.recap-total-row .is-tie {
+.recap-total-row span.is-tie {
   color: #7c5a00;
 }
 

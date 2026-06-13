@@ -41,11 +41,11 @@
         <button id="showRegister" class="ghost" type="button">New user</button>
         <form id="registerForm" class="form hidden">
           <p class="eyebrow">New teammate</p>
-          <p class="hint">After signing up, open Options and enable Sub Alerts so you get notified when someone needs a sub.</p>
+          <p class="hint">After signing up, enable Push Notifications so you get team updates, blog replies, and sub requests.</p>
           <label>Email <input name="email" type="email" required></label>
           <label>Username <input name="username" type="text" required></label>
           <label>Password <input name="password" type="password" minlength="8" required></label>
-          <label class="check-row"><input name="enableSubAlerts" type="checkbox"> Enable Sub Alerts after signup</label>
+          <label class="check-row"><input name="enableSubAlerts" type="checkbox"> Enable Push Notifications after signup</label>
           <label id="adminSetupCodeField" class="hidden">Admin setup code <input name="setupCode" type="text" placeholder="Only needed for first admin setup"></label>
           <div class="row-actions">
             <button type="submit">Create account</button>
@@ -85,20 +85,22 @@
           <h2>User options</h2>
           <form id="profileForm" class="form">
             <label>Recap sheet name <input name="recapName" type="text" maxlength="80" placeholder="Name as shown on bowling recap"></label>
-            <button type="submit">Save options</button>
+            <div class="settings-row">
+              <div>
+                <strong>Push Notifications</strong>
+                <p class="muted">Get alerts for blog updates, replies, sub requests, and other team activity.</p>
+              </div>
+              <div id="pushControls" class="row-actions hidden">
+                <button id="enablePush" type="button" class="ghost small">Enable Push Notifications</button>
+                <button id="disablePush" type="button" class="ghost small hidden">Disable Push Notifications</button>
+                <span id="pushStatus" class="muted"></span>
+              </div>
+            </div>
+            <div class="row-actions">
+              <button type="submit">Save options</button>
+            </div>
           </form>
           <p id="profileStatus" class="action-status hidden"></p>
-          <div class="settings-row">
-            <div>
-              <strong>Sub Alerts</strong>
-              <p class="muted">Get a push notification when someone needs a sub.</p>
-            </div>
-            <div id="pushControls" class="row-actions hidden">
-              <button id="enablePush" type="button" class="ghost small">Enable Sub Alerts</button>
-              <button id="disablePush" type="button" class="ghost small hidden">Disable Sub Alerts</button>
-              <span id="pushStatus" class="muted"></span>
-            </div>
-          </div>
         </section>
       </section>
 
@@ -202,31 +204,36 @@
             <button id="newScoreRecap" class="user-only hidden" type="button">New recap</button>
           </div>
           <form id="scoreRecapForm" class="form score-form user-only hidden">
-            <div class="inline-form">
+            <div class="score-basic-grid">
               <label>Date <input name="date" type="date" required></label>
               <label>Week <input name="week" type="text" placeholder="1"></label>
-              <label>Our team <input name="ourTeamName" type="text" value="3 Finger Death Punch"></label>
-              <label>Opponent <input name="opponentTeamName" type="text" placeholder="Opponent"></label>
             </div>
             <label>Recap photo <input name="recapPhoto" type="file" accept="image/*"></label>
             <div id="scorePhotoPreview" class="score-photo-preview hidden"></div>
             <div class="row-actions">
               <button id="scanScorePhoto" class="ghost" type="button">Scan photo</button>
+              <button id="manualScoreEntry" class="ghost" type="button">Manual recap entry</button>
             </div>
-            <div class="score-entry-grid">
-              <div>
-                <div class="score-grid-heading">
-                  <h3>3FDP</h3>
-                  <button class="ghost small" type="button" data-add-score-line="our">Add bowler</button>
-                </div>
-                <div id="ourScoreLines" class="score-lines"></div>
+            <div id="manualScoreFields" class="manual-score-fields hidden">
+              <div class="inline-form">
+                <label>Our team <input name="ourTeamName" type="text" value="3 Finger Death Punch"></label>
+                <label>Opponent <input name="opponentTeamName" type="text" placeholder="Opponent"></label>
               </div>
-              <div>
-                <div class="score-grid-heading">
-                  <h3>Opponent</h3>
-                  <button class="ghost small" type="button" data-add-score-line="opponent">Add bowler</button>
+              <div class="score-entry-grid">
+                <div>
+                  <div class="score-grid-heading">
+                    <h3>3FDP</h3>
+                    <button class="ghost small" type="button" data-add-score-line="our">Add bowler</button>
+                  </div>
+                  <div id="ourScoreLines" class="score-lines"></div>
                 </div>
-                <div id="opponentScoreLines" class="score-lines"></div>
+                <div>
+                  <div class="score-grid-heading">
+                    <h3>Opponent</h3>
+                    <button class="ghost small" type="button" data-add-score-line="opponent">Add bowler</button>
+                  </div>
+                  <div id="opponentScoreLines" class="score-lines"></div>
+                </div>
               </div>
             </div>
             <label class="admin-only hidden">Admin note <textarea name="notes" rows="2" placeholder="Subs, payment notes, or recap context"></textarea></label>
@@ -239,40 +246,49 @@
         </section>
 
         <section class="panel">
-          <p class="eyebrow">Bowler Log</p>
-          <h2>3FDP performance</h2>
+          <div class="section-heading">
+            <div>
+              <p id="scoreViewEyebrow" class="eyebrow">Bowler Log</p>
+              <h2 id="scoreViewTitle">3FDP performance</h2>
+            </div>
+            <div id="scoreModeControls" class="segmented" role="group" aria-label="Score view">
+              <button type="button" data-score-mode="bowlers">Bowler Log</button>
+              <button type="button" data-score-mode="recaps">Recap Log</button>
+              <button type="button" data-score-mode="prize" class="prize-mode-button hidden">Prize Money</button>
+            </div>
+          </div>
+          <div id="bowlerLogPanel" class="score-view-panel">
           <div class="table-wrap">
             <table>
               <thead><tr><th>Bowler</th><th>Games</th><th>High Game</th><th>High Series</th><th>Average</th><th>HDCP</th></tr></thead>
               <tbody id="bowlerStats"></tbody>
             </table>
           </div>
-        </section>
-
-        <section class="panel admin-only hidden">
-          <p class="eyebrow">Prize Money</p>
-          <h2>Prize money distribution</h2>
-          <form id="prizePotForm" class="form inline-form">
-            <label>Prize pot <input name="prizePot" type="number" min="0" step="0.01" placeholder="0.00"></label>
-            <button type="submit">Calculate</button>
-          </form>
-          <div class="table-wrap">
-            <table>
-              <thead><tr><th>Bowler</th><th>Games Bowled</th><th>Paid Games</th><th>Unpaid Sub Games</th><th>Paid %</th><th>Payout</th></tr></thead>
-              <tbody id="prizeRows"></tbody>
-            </table>
           </div>
-        </section>
-
-        <section class="panel">
-          <div class="section-heading">
-            <div>
-              <p class="eyebrow">Recap Log</p>
-              <h2>Matches</h2>
+          <div id="recapLogPanel" class="score-view-panel hidden">
+            <div class="section-heading">
+              <div>
+                <p class="eyebrow">Recap Log</p>
+                <h2>Matches</h2>
+              </div>
+              <label>Week <select id="scoreWeekFilter"></select></label>
             </div>
-            <label>Week <select id="scoreWeekFilter"></select></label>
+            <div id="scoreRecaps" class="score-recaps"></div>
           </div>
-          <div id="scoreRecaps" class="score-recaps"></div>
+          <div id="prizeMoneyPanel" class="score-view-panel hidden">
+            <p class="eyebrow">Prize Money</p>
+            <h2>Prize money distribution</h2>
+            <form id="prizePotForm" class="form inline-form">
+              <label>Prize pot <input name="prizePot" type="number" min="0" step="0.01" placeholder="0.00"></label>
+              <button type="submit">Calculate</button>
+            </form>
+            <div class="table-wrap">
+              <table>
+                <thead><tr><th>Bowler</th><th>Games Bowled</th><th>Paid Games</th><th>Unpaid Sub Games</th><th>Paid %</th><th>Payout</th></tr></thead>
+                <tbody id="prizeRows"></tbody>
+              </table>
+            </div>
+          </div>
         </section>
       </section>
 
@@ -285,6 +301,7 @@
             <label>Practice start <input name="practiceStartTime" type="time"></label>
             <label>Contest start <input name="contestStartDate" type="date"></label>
             <label>Contest end <input name="contestEndDate" type="date"></label>
+            <label class="check-row"><input name="prizeMoneyPublic" type="checkbox"> Show prize money to users</label>
             <button type="submit">Save setup</button>
           </form>
           <p id="configStatus" class="action-status hidden"></p>
@@ -322,6 +339,27 @@
             </table>
           </div>
         </section>
+
+        <dialog id="adminEditUserDialog" class="modal-dialog">
+          <form id="adminEditUserForm" class="form" method="dialog">
+            <p class="eyebrow">Edit Account</p>
+            <h2>User details</h2>
+            <input name="id" type="hidden">
+            <label>Username <input name="username" type="text" required></label>
+            <label>Email <input name="email" type="email" required></label>
+            <label>Recap sheet name <input name="recapName" type="text" maxlength="80"></label>
+            <label>Role
+              <select name="role">
+                <option value="user">User</option>
+                <option value="admin">Admin</option>
+              </select>
+            </label>
+            <div class="row-actions">
+              <button type="submit">Save user</button>
+              <button id="cancelAdminEditUser" class="ghost" type="button">Cancel</button>
+            </div>
+          </form>
+        </dialog>
       </section>
     </main>
 

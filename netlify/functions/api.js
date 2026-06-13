@@ -25,7 +25,8 @@ const defaultData = {
     contestStartDate: "",
     contestEndDate: "",
     weighInHour: 18,
-    timeZone: TIME_ZONE
+    timeZone: TIME_ZONE,
+    prizeMoneyPublic: false
   },
   users: [],
   notes: [],
@@ -881,7 +882,12 @@ exports.handler = async (event) => {
 
     if (method === "PUT" && route === "/admin/config") {
       requireAdmin(event, data);
-      data.config = { ...data.config, ...parseBody(event) };
+      const body = parseBody(event);
+      data.config = {
+        ...data.config,
+        ...body,
+        prizeMoneyPublic: normalizeBoolean(body.prizeMoneyPublic, false)
+      };
       await saveData(data);
       return json(200, { config: data.config, schedule: buildSchedule(data) });
     }

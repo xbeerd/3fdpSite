@@ -13,6 +13,8 @@ const state = {
   pushConfigured: false,
   pushSubscribed: false,
   boardMode: "main",
+  scoreMode: "bowlers",
+  manualScoreEntryOpen: false,
   showAllWeights: false,
   scoreRecaps: [],
   bowlerStats: [],
@@ -339,7 +341,7 @@ function renderPushControls(message = "") {
   if (!visible) return;
   $("#enablePush").classList.toggle("hidden", state.pushSubscribed);
   $("#disablePush").classList.toggle("hidden", !state.pushSubscribed);
-  $("#pushStatus").textContent = message || (state.pushSubscribed ? "Sub alerts enabled." : "Sub alerts off.");
+  $("#pushStatus").textContent = message || (state.pushSubscribed ? "Push notifications enabled." : "Push notifications off.");
 }
 
 function renderProfileOptions() {
@@ -364,20 +366,20 @@ async function refreshPushState() {
     const registration = await pushRegistration();
     const subscription = await registration.pushManager.getSubscription();
     state.pushSubscribed = Boolean(subscription);
-    renderPushControls(state.pushConfigured ? "" : "Sub alerts need server setup.");
+    renderPushControls(state.pushConfigured ? "" : "Push notifications need server setup.");
   } catch {
     state.pushConfigured = false;
     state.pushSubscribed = false;
-    renderPushControls("Sub alerts unavailable.");
+    renderPushControls("Push notifications unavailable.");
   }
 }
 
 async function enablePushAlerts() {
-  if (!pushSupported()) return toast("This browser does not support push alerts.");
+  if (!pushSupported()) return toast("This browser does not support push notifications.");
   const key = await api("/api/push/public-key");
-  if (!key.configured || !key.publicKey) return renderPushControls("Sub alerts need server setup.");
+  if (!key.configured || !key.publicKey) return renderPushControls("Push notifications need server setup.");
   const permission = await Notification.requestPermission();
-  if (permission !== "granted") return renderPushControls("Sub alerts blocked.");
+  if (permission !== "granted") return renderPushControls("Push notifications blocked.");
   const registration = await pushRegistration();
   const subscription = await registration.pushManager.subscribe({
     userVisibleOnly: true,
@@ -385,14 +387,14 @@ async function enablePushAlerts() {
   });
   await api("/api/push/subscriptions", { method: "POST", body: JSON.stringify({ subscription }) });
   state.pushSubscribed = true;
-  renderPushControls("Sub alerts enabled.");
-  toast("Sub alerts enabled.");
+  renderPushControls("Push notifications enabled.");
+  toast("Push notifications enabled.");
 }
 
 async function disablePushAlerts() {
   const previousSubscribed = state.pushSubscribed;
   state.pushSubscribed = false;
-  renderPushControls("Sub alerts off.");
+  renderPushControls("Push notifications off.");
   const registration = await pushRegistration();
   const subscription = await registration.pushManager.getSubscription();
   try {
@@ -400,10 +402,10 @@ async function disablePushAlerts() {
       await api("/api/push/subscriptions", { method: "DELETE", body: JSON.stringify({ endpoint: subscription.endpoint }) });
       await subscription.unsubscribe();
     }
-    toast("Sub alerts disabled.");
+    toast("Push notifications disabled.");
   } catch (error) {
     state.pushSubscribed = previousSubscribed;
-    renderPushControls("Sub alerts still enabled.");
+    renderPushControls("Push notifications still enabled.");
     throw error;
   }
 }
@@ -835,6 +837,13 @@ function mergeScannedLines(existing, scanned) {
   return scanned.length ? scanned : existing;
 }
 
+function setManualScoreEntryOpen(open) {
+  state.manualScoreEntryOpen = Boolean(open);
+  $("#manualScoreFields")?.classList.toggle("hidden", !state.manualScoreEntryOpen);
+  const button = $("#manualScoreEntry");
+  if (button) button.textContent = state.manualScoreEntryOpen ? "Hide manual entry" : "Manual recap entry";
+}
+
 function showScoreForm(recap = null) {
   const form = $("#scoreRecapForm");
   form.classList.remove("hidden");
@@ -855,6 +864,7 @@ function showScoreForm(recap = null) {
   };
   renderScorePhotoPreview();
   setScoreFormLines(recap?.ourTeamLines, recap?.opponentLines);
+  setManualScoreEntryOpen(Boolean(recap));
   $("#newScoreRecap").textContent = state.editingScoreRecapId ? "Editing recap" : "New recap";
 }
 
@@ -867,6 +877,7 @@ function hideScoreForm() {
   state.scoreGameTotals = { our: [0, 0, 0], opponent: [0, 0, 0] };
   renderScorePhotoPreview();
   setScoreFormLines();
+  setManualScoreEntryOpen(false);
   $("#newScoreRecap").textContent = "New recap";
 }
 
@@ -902,6 +913,17 @@ function applyScoreDashboard(data) {
 }
 
 function renderScores() {
+  const canViewPrize = state.user?.role === "admin" || Boolean(state.config.prizeMoneyPublic);
+  if (state.scoreMode === "prize" && !canViewPrize) state.scoreMode = "bowlers";
+  $$("#scoreModeControls [data-score-mode]").forEach((button) => {
+    button.classList.toggle("is-active", button.dataset.scoreMode === state.scoreMode);
+  });
+  $$(".prize-mode-button").forEach((button) => button.classList.toggle("hidden", !canViewPrize));
+  $("#scoreViewEyebrow").textContent = state.scoreMode === "recaps" ? "Recap Log" : state.scoreMode === "prize" ? "Prize Money" : "Bowler Log";
+  $("#scoreViewTitle").textContent = state.scoreMode === "recaps" ? "Matches" : state.scoreMode === "prize" ? "Prize money distribution" : "3FDP performance";
+  $("#bowlerLogPanel").classList.toggle("hidden", state.scoreMode !== "bowlers");
+  $("#recapLogPanel").classList.toggle("hidden", state.scoreMode !== "recaps");
+  $("#prizeMoneyPanel").classList.toggle("hidden", state.scoreMode !== "prize" || !canViewPrize);
   $("#bowlerStats").innerHTML = state.bowlerStats.length
     ? state.bowlerStats.map((bowler) => `
       <tr>
@@ -1044,6 +1066,7 @@ function renderAdmin() {
   $("#configForm input[name='practiceStartTime']").value = state.config.practiceStartTime || "";
   $("#configForm input[name='contestStartDate']").value = state.config.contestStartDate || "";
   $("#configForm input[name='contestEndDate']").value = state.config.contestEndDate || "";
+  $("#configForm input[name='prizeMoneyPublic']").checked = Boolean(state.config.prizeMoneyPublic);
   $("#adminUsers").innerHTML = state.adminUsers.map((user) => `
     <tr>
       <td>${escapeHtml(user.username)}</td>
@@ -1262,11 +1285,7 @@ $("#registerForm").addEventListener("submit", async (event) => {
     submit.textContent = "Creating...";
   }
   try {
-    try {
-      await api("/api/register", { method: "POST", body: JSON.stringify(Object.fromEntries(formData)) });
-    } catch (error) {
-      if (!/already registered/i.test(error.message)) throw error;
-    }
+    await api("/api/register", { method: "POST", body: JSON.stringify(Object.fromEntries(formData)) });
     const data = await api("/api/login", { method: "POST", body: JSON.stringify({ email: formData.get("email"), password: formData.get("password") }) });
     state.user = data.user;
     state.view = "home";
@@ -1276,6 +1295,7 @@ $("#registerForm").addEventListener("submit", async (event) => {
     toast("Account created.");
     if (enableSubAlerts) await enablePushAlerts();
   } catch (error) {
+    if (/already registered/i.test(error.message)) showRegisterForm(false);
     toast(error.message);
   } finally {
     if (submit?.isConnected) {
@@ -1463,8 +1483,9 @@ $("#calendarList").addEventListener("click", async (event) => {
       renderHome();
       renderCalendar();
       const data = await api(`/api/calendar/events/${deleteEventButton.dataset.deleteEvent}`, { method: "DELETE" });
-      state.events = data.events.filter((eventItem) => eventItem.id !== eventId);
-      state.subRequests = data.subRequests.filter((request) => request.eventId !== eventId);
+      state.events = data.events;
+      state.subRequests = data.subRequests;
+      if (!selectedCalendarEvent()) state.selectedCalendarEventId = null;
       renderHome();
       renderCalendar();
       toast(`${data.removedCount || 1} calendar event${data.removedCount === 1 ? "" : "s"} removed.`);
@@ -1505,13 +1526,7 @@ $("#calendarList").addEventListener("click", async (event) => {
       renderHome();
       renderCalendar();
       const data = await api(`/api/sub-requests/${deleteSubButton.dataset.deleteSubRequest}`, { method: "DELETE" });
-      if (request) state.subRequests = state.subRequests.filter((item) => item.eventId !== request.eventId);
-      else state.subRequests = state.subRequests.filter((item) => item.id !== deleteSubButton.dataset.deleteSubRequest);
-      renderHome();
-      renderCalendar();
-      state.subRequests = request
-        ? data.subRequests.filter((item) => item.eventId !== request.eventId)
-        : data.subRequests.filter((item) => item.id !== deleteSubButton.dataset.deleteSubRequest);
+      state.subRequests = data.subRequests;
       renderHome();
       renderCalendar();
       toast(`${data.removedCount || 1} sub request${data.removedCount === 1 ? "" : "s"} canceled.`);
@@ -1680,6 +1695,17 @@ $("#prizePotForm").addEventListener("submit", (event) => {
 $("#newScoreRecap").addEventListener("click", () => showScoreForm());
 
 $("#cancelScoreEdit").addEventListener("click", () => hideScoreForm());
+
+$("#manualScoreEntry").addEventListener("click", () => setManualScoreEntryOpen(!state.manualScoreEntryOpen));
+
+$("#scoreModeControls").addEventListener("click", (event) => {
+  const button = event.target.closest("[data-score-mode]");
+  if (!button) return;
+  const canViewPrize = state.user?.role === "admin" || Boolean(state.config.prizeMoneyPublic);
+  if (button.dataset.scoreMode === "prize" && !canViewPrize) return;
+  state.scoreMode = button.dataset.scoreMode;
+  renderScores();
+});
 
 $("#scoreRecapForm").addEventListener("click", (event) => {
   const add = event.target.closest("[data-add-score-line]");
@@ -1857,11 +1883,14 @@ $("#configForm").addEventListener("submit", async (event) => {
   event.preventDefault();
   const form = event.currentTarget;
   try {
-    const data = await api("/api/admin/config", { method: "PUT", body: JSON.stringify(Object.fromEntries(new FormData(form))) });
+    const payload = Object.fromEntries(new FormData(form));
+    payload.prizeMoneyPublic = form.elements.prizeMoneyPublic.checked;
+    const data = await api("/api/admin/config", { method: "PUT", body: JSON.stringify(payload) });
     state.config = data.config;
     state.schedule = data.schedule;
     renderContestHeader();
     renderBoard();
+    renderScores();
     setActionStatus("#configStatus", "Setup saved.");
     toast("Setup saved.");
   } catch (error) {
@@ -1896,9 +1925,7 @@ $("#csvForm").addEventListener("submit", async (event) => {
     const data = action === "delete"
       ? await api("/api/calendar/events/delete-by-csv", { method: "POST", body: JSON.stringify({ events }) })
       : await api("/api/calendar/events", { method: "POST", body: JSON.stringify({ events }) });
-    state.events = action === "delete"
-      ? data.events.filter((eventItem) => !deleteKeys.has(calendarEventKey(eventItem)))
-      : data.events;
+    state.events = data.events;
     state.subRequests = (data.subRequests || state.subRequests).filter((request) => state.events.some((eventItem) => eventItem.id === request.eventId));
     state.lastImportId = action === "upload" ? (data.importId || "") : "";
     updateUndoImportButton();
@@ -1942,7 +1969,7 @@ $("#undoCsvImport").addEventListener("click", async () => {
     renderHome();
     renderCalendar();
     const data = await api(`/api/calendar/imports/${importId}`, { method: "DELETE" });
-    state.events = data.events.filter((eventItem) => eventItem.importId !== importId);
+    state.events = data.events;
     state.subRequests = data.subRequests.filter((request) => state.events.some((eventItem) => eventItem.id === request.eventId));
     const message = `Last schedule upload undone: ${data.removedCount} event${data.removedCount === 1 ? "" : "s"} removed.`;
     setActionStatus("#csvStatus", message);
@@ -1977,6 +2004,37 @@ $("#adminCreateUserForm").addEventListener("submit", async (event) => {
   }
 });
 
+$("#cancelAdminEditUser").addEventListener("click", () => {
+  $("#adminEditUserDialog")?.close();
+});
+
+$("#adminEditUserForm").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const form = event.currentTarget;
+  const submit = form.querySelector("button[type='submit']");
+  const userId = form.elements.id.value;
+  const previousUsers = [...state.adminUsers];
+  if (submit) submit.disabled = true;
+  try {
+    const payload = Object.fromEntries(new FormData(form));
+    delete payload.id;
+    state.adminUsers = state.adminUsers.map((item) => item.id === userId ? { ...item, ...payload } : item);
+    renderAdmin();
+    await api(`/api/admin/users/${userId}`, { method: "PUT", body: JSON.stringify(payload) });
+    await refreshAdmin();
+    $("#adminEditUserDialog")?.close();
+    setActionStatus("#userAdminStatus", "User updated.");
+    toast("User updated.");
+  } catch (error) {
+    state.adminUsers = previousUsers;
+    renderAdmin();
+    setActionStatus("#userAdminStatus", error.message);
+    toast(error.message);
+  } finally {
+    if (submit?.isConnected) submit.disabled = false;
+  }
+});
+
 $("#adminUsers").addEventListener("click", async (event) => {
   const edit = event.target.closest("[data-edit-user]");
   const reset = event.target.closest("[data-reset-user]");
@@ -1988,21 +2046,13 @@ $("#adminUsers").addEventListener("click", async (event) => {
     if (edit) {
       const user = state.adminUsers.find((item) => item.id === edit.dataset.editUser);
       if (!user) return toast("User not found.");
-      const username = prompt("Username:", user.username || "");
-      if (username === null) return;
-      const email = prompt("Email:", user.email || "");
-      if (email === null) return;
-      const recapName = prompt("Recap sheet name:", user.recapName || "");
-      if (recapName === null) return;
-      const role = prompt("Role (admin or user):", user.role || "user");
-      if (role === null) return;
-      previousUsers = [...state.adminUsers];
-      state.adminUsers = state.adminUsers.map((item) => item.id === user.id ? { ...item, username, email, recapName, role } : item);
-      renderAdmin();
-      await api(`/api/admin/users/${user.id}`, { method: "PUT", body: JSON.stringify({ username, email, recapName, role }) });
-      await refreshAdmin();
-      setActionStatus("#userAdminStatus", "User updated.");
-      toast("User updated.");
+      const form = $("#adminEditUserForm");
+      form.elements.id.value = user.id;
+      form.elements.username.value = user.username || "";
+      form.elements.email.value = user.email || "";
+      form.elements.recapName.value = user.recapName || "";
+      form.elements.role.value = user.role || "user";
+      $("#adminEditUserDialog")?.showModal();
       return;
     }
     if (reset) {

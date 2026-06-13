@@ -410,6 +410,20 @@ function scoreLineTotal(line) {
   return [line.game1, line.game2, line.game3].reduce((sum, score) => sum + (Number(score) || 0), 0);
 }
 
+function normalizeTeamName(value, fallback = "") {
+  const text = String(value || "").trim();
+  if (/^3\s*finger(?:s)?\s*dea/i.test(text) || /^3fdp$/i.test(text)) return "3FDP";
+  return text || fallback;
+}
+
+function normalizeHandicapTotals(value) {
+  const source = Array.isArray(value) ? value : [];
+  return [0, 1, 2].map((index) => {
+    const number = Number(source[index]);
+    return Number.isFinite(number) && number > 0 ? Math.round(number) : 0;
+  });
+}
+
 function normalizeScoreLine(line = {}) {
   const bowlerName = String(line.bowlerName || "").trim();
   const scores = {
@@ -442,14 +456,17 @@ function normalizeScoreRecap(body, existing = {}, options = {}) {
   const ourTeamLines = (Array.isArray(body.ourTeamLines) ? body.ourTeamLines : []).map(normalizeScoreLine).filter(Boolean);
   const opponentLines = (Array.isArray(body.opponentLines) ? body.opponentLines : []).map(normalizeScoreLine).filter(Boolean);
   if (!ourTeamLines.length) throw Object.assign(new Error("Add at least one 3FDP bowler score row."), { statusCode: 400 });
+  const calendarEvent = options.data?.calendarEvents?.find((eventItem) => eventItem.date === date);
   return {
     ...existing,
     date,
     week: body.week === "" || body.week === undefined ? "" : String(body.week).trim(),
-    ourTeamName: String(body.ourTeamName || "3 Finger Death Punch").trim(),
-    opponentTeamName: String(body.opponentTeamName || "").trim(),
+    ourTeamName: normalizeTeamName(body.ourTeamName || "3FDP", "3FDP"),
+    opponentTeamName: String(calendarEvent?.opponent || body.opponentTeamName || "").trim(),
     ourTeamLines,
     opponentLines,
+    ourHandicap: normalizeHandicapTotals(body.ourHandicap || existing.ourHandicap),
+    opponentHandicap: normalizeHandicapTotals(body.opponentHandicap || existing.opponentHandicap),
     notes: options.canEditAdminNote ? String(body.notes || "").trim() : (existing.notes || ""),
     photoDataUrl: normalizeScorePhoto(body.photoDataUrl)
   };
@@ -459,6 +476,11 @@ function publicScoreRecap(recap, user = null) {
   const lineWithTotal = (line) => ({ ...line, series: scoreLineTotal(line) });
   const ourPins = [1, 2, 3].map((game) => recap.ourTeamLines.reduce((sum, line) => sum + line[`game${game}`], 0));
   const opponentPins = [1, 2, 3].map((game) => recap.opponentLines.reduce((sum, line) => sum + line[`game${game}`], 0));
+  const ourHandicap = normalizeHandicapTotals(recap.ourHandicap);
+  const opponentHandicap = normalizeHandicapTotals(recap.opponentHandicap);
+  const ourWithHandicap = ourPins.map((score, index) => score + ourHandicap[index]);
+  const opponentWithHandicap = opponentPins.map((score, index) => score + opponentHandicap[index]);
+  const gameResults = ourWithHandicap.map((score, index) => opponentPins[index] || opponentHandicap[index] ? score - opponentWithHandicap[index] : null);
   return {
     ...recap,
     canManage: Boolean(user && (user.role === "admin" || user.id === recap.createdByUserId)),
@@ -467,10 +489,20 @@ function publicScoreRecap(recap, user = null) {
     totals: {
       ourPins,
       opponentPins,
+      ourHandicap,
+      opponentHandicap,
+      ourWithHandicap,
+      opponentWithHandicap,
       ourSeries: ourPins.reduce((sum, score) => sum + score, 0),
       opponentSeries: opponentPins.reduce((sum, score) => sum + score, 0),
-      margins: ourPins.map((score, index) => opponentPins[index] ? score - opponentPins[index] : null),
-      seriesMargin: opponentPins.some(Boolean) ? ourPins.reduce((sum, score) => sum + score, 0) - opponentPins.reduce((sum, score) => sum + score, 0) : null
+      ourSeriesWithHandicap: ourWithHandicap.reduce((sum, score) => sum + score, 0),
+      opponentSeriesWithHandicap: opponentWithHandicap.reduce((sum, score) => sum + score, 0),
+      margins: gameResults,
+      gamesWon: gameResults.filter((margin) => margin !== null && margin > 0).length,
+      gamesLost: gameResults.filter((margin) => margin !== null && margin < 0).length,
+      seriesMargin: opponentPins.some(Boolean) || opponentHandicap.some(Boolean)
+        ? ourWithHandicap.reduce((sum, score) => sum + score, 0) - opponentWithHandicap.reduce((sum, score) => sum + score, 0)
+        : null
     }
   };
 }
@@ -478,10 +510,29 @@ function publicScoreRecap(recap, user = null) {
 function scoreDashboard(data, user = null) {
   const recaps = [...data.scoreRecaps].sort((a, b) => String(b.date).localeCompare(String(a.date)) || String(b.createdAt || "").localeCompare(String(a.createdAt || "")));
   const bowlerMap = new Map();
+  const prizeMap = new Map();
   for (const recap of [...data.scoreRecaps].sort((a, b) => String(a.date).localeCompare(String(b.date)))) {
     for (const [teamType, lines] of [["our", recap.ourTeamLines || []], ["opponent", recap.opponentLines || []]]) {
       for (const line of lines) {
         const key = line.bowlerName.toLowerCase();
+        if (teamType === "our") {
+          const prize = prizeMap.get(key) || {
+            bowlerName: line.bowlerName,
+            gamesBowled: 0,
+            paidGames: 0,
+            unpaidSubGames: 0,
+            subWeeks: 0,
+            paidSubWeeks: 0
+          };
+          prize.gamesBowled += 3;
+          const paidGames = (!line.isSub || line.paid) ? 3 : 0;
+          prize.paidGames += paidGames;
+          prize.unpaidSubGames += line.isSub && !line.paid ? 3 : 0;
+          prize.subWeeks += line.isSub ? 1 : 0;
+          prize.paidSubWeeks += line.isSub && line.paid ? 1 : 0;
+          prizeMap.set(key, prize);
+        }
+        if (teamType !== "our") continue;
         const current = bowlerMap.get(key) || {
           bowlerName: line.bowlerName,
           teamType,
@@ -500,14 +551,11 @@ function scoreDashboard(data, user = null) {
         current.subWeeks += line.isSub ? 1 : 0;
         current.paidSubWeeks += line.isSub && line.paid ? 1 : 0;
         current.prizeEligibleWeeks += (!line.isSub || line.paid) ? 1 : 0;
-        if (teamType === "our") {
-          current.games += 3;
-          current.pins += series;
-          current.highGame = Math.max(current.highGame, line.game1, line.game2, line.game3);
-          current.highSeries = Math.max(current.highSeries, series);
-        }
+        current.games += 3;
+        current.pins += series;
+        current.highGame = Math.max(current.highGame, line.game1, line.game2, line.game3);
+        current.highSeries = Math.max(current.highSeries, series);
         current.lastDate = recap.date;
-        current.teamType = current.teamType === "our" || teamType === "our" ? "our" : "opponent";
         if (line.handicapOverride !== null && line.handicapOverride !== undefined) current.handicapOverride = line.handicapOverride;
         bowlerMap.set(key, current);
       }
@@ -521,8 +569,13 @@ function scoreDashboard(data, user = null) {
       average,
       handicap: bowler.handicapOverride ?? calculatedHandicap
     };
-  }).sort((a, b) => (b.teamType === "our") - (a.teamType === "our") || String(a.bowlerName).localeCompare(String(b.bowlerName)));
-  return { recaps: recaps.map((recap) => publicScoreRecap(recap, user)), bowlers };
+  }).sort((a, b) => String(a.bowlerName).localeCompare(String(b.bowlerName)));
+  const totalPaidGames = [...prizeMap.values()].reduce((sum, row) => sum + row.paidGames, 0);
+  const prizeRows = [...prizeMap.values()].map((row) => ({
+    ...row,
+    paidPercent: totalPaidGames ? Number(((row.paidGames / totalPaidGames) * 100).toFixed(2)) : 0
+  })).sort((a, b) => String(a.bowlerName).localeCompare(String(b.bowlerName)));
+  return { recaps: recaps.map((recap) => publicScoreRecap(recap, user)), bowlers, prizeRows, totalPaidGames };
 }
 
 function extractResponseText(response) {
@@ -580,7 +633,8 @@ async function scanScorePhoto(photoDataUrl) {
               "Read this bowling recap screen and return only valid JSON.",
               "Extract both teams if visible. If only one team is visible, put it in ourTeamLines if it appears to be 3 Finger Death Punch / 3 Finger Dea / 3 FDP, otherwise use opponentLines.",
               "Do not include totals rows, pins rows, handicap rows, or game totals.",
-              "Use this shape exactly: {\"ourTeamName\":\"\",\"opponentTeamName\":\"\",\"ourTeamLines\":[{\"bowlerName\":\"\",\"game1\":0,\"game2\":0,\"game3\":0}],\"opponentLines\":[{\"bowlerName\":\"\",\"game1\":0,\"game2\":0,\"game3\":0}],\"warnings\":[]}.",
+              "Do extract the team handicap row labeled +HDCP or handicap as three game numbers for each team when visible.",
+              "Use this shape exactly: {\"ourTeamName\":\"\",\"opponentTeamName\":\"\",\"ourHandicap\":[0,0,0],\"opponentHandicap\":[0,0,0],\"ourTeamLines\":[{\"bowlerName\":\"\",\"game1\":0,\"game2\":0,\"game3\":0}],\"opponentLines\":[{\"bowlerName\":\"\",\"game1\":0,\"game2\":0,\"game3\":0}],\"warnings\":[]}.",
               "If uncertain about a digit or name, still give your best guess and add a warning."
             ].join(" ")
           },
@@ -602,6 +656,8 @@ async function scanScorePhoto(photoDataUrl) {
   return {
     ourTeamName: String(parsed.ourTeamName || "").trim(),
     opponentTeamName: String(parsed.opponentTeamName || "").trim(),
+    ourHandicap: normalizeHandicapTotals(parsed.ourHandicap),
+    opponentHandicap: normalizeHandicapTotals(parsed.opponentHandicap),
     ourTeamLines: (Array.isArray(parsed.ourTeamLines) ? parsed.ourTeamLines : []).map(normalizeScannedLine).filter(Boolean),
     opponentLines: (Array.isArray(parsed.opponentLines) ? parsed.opponentLines : []).map(normalizeScannedLine).filter(Boolean),
     warnings: Array.isArray(parsed.warnings) ? parsed.warnings.map((warning) => String(warning)).filter(Boolean).slice(0, 5) : []
@@ -1164,7 +1220,7 @@ exports.handler = async (event) => {
 
     if (method === "POST" && route === "/scores/recaps") {
       const user = requireUser(event, data);
-      const recap = normalizeScoreRecap(parseBody(event), {}, { canEditAdminNote: user.role === "admin" });
+      const recap = normalizeScoreRecap(parseBody(event), {}, { canEditAdminNote: user.role === "admin", data });
       Object.assign(recap, {
         id: crypto.randomUUID(),
         createdByUserId: user.id,
@@ -1187,7 +1243,7 @@ exports.handler = async (event) => {
         updatedAt: new Date().toISOString(),
         updatedByUserId: user.id,
         updatedByUsername: user.username
-      }, { canEditAdminNote: user.role === "admin" });
+      }, { canEditAdminNote: user.role === "admin", data });
       await saveData(data);
       return json(200, scoreDashboard(data, user));
     }

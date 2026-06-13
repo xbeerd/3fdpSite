@@ -569,6 +569,16 @@ td .muted { display: block; margin-top: 0.2rem; font-size: 0.8rem; }
   border-radius: 8px;
 }
 
+.score-photo-details {
+  margin: 0.7rem 0;
+}
+
+.score-photo-details summary {
+  cursor: pointer;
+  color: var(--text);
+  font-weight: 850;
+}
+
 .score-recap,
 .score-card {
   min-width: 0;
@@ -610,6 +620,10 @@ td .muted { display: block; margin-top: 0.2rem; font-size: 0.8rem; }
   padding: 0.45rem 0;
   border-bottom: 1px solid var(--line);
   font-size: 0.86rem;
+}
+
+.recap-grid.no-flags {
+  grid-template-columns: minmax(130px, 1.6fr) repeat(4, minmax(42px, 0.6fr));
 }
 
 .recap-grid-head {
@@ -695,6 +709,9 @@ td .muted { display: block; margin-top: 0.2rem; font-size: 0.8rem; }
   .recap-grid {
     grid-template-columns: minmax(118px, 1.4fr) repeat(4, minmax(38px, 0.6fr)) minmax(68px, 0.8fr);
     min-width: 420px;
+  }
+  .recap-grid.no-flags {
+    grid-template-columns: minmax(118px, 1.4fr) repeat(4, minmax(38px, 0.6fr));
   }
   .score-card {
     overflow-x: auto;

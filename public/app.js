@@ -16,10 +16,15 @@ const state = {
   showAllWeights: false,
   scoreRecaps: [],
   bowlerStats: [],
+  prizeRows: [],
+  totalPaidGames: 0,
   editingScoreRecapId: "",
   scorePhotoDataUrl: "",
   notePhotoDataUrl: "",
   editingCalendarEventId: "",
+  scoreHandicapTotals: { our: [0, 0, 0], opponent: [0, 0, 0] },
+  selectedScoreWeek: "",
+  prizePot: Number(localStorage.getItem("prizePot") || 0),
   calendarCursor: new Date().toISOString().slice(0, 7),
   selectedCalendarEventId: null,
   lastImportId: "",
@@ -304,6 +309,8 @@ async function refreshScores() {
   const data = await api("/api/scores/dashboard");
   state.scoreRecaps = data.recaps;
   state.bowlerStats = data.bowlers;
+  state.prizeRows = data.prizeRows || [];
+  state.totalPaidGames = data.totalPaidGames || 0;
   renderScores();
 }
 
@@ -837,6 +844,10 @@ function showScoreForm(recap = null) {
   form.elements.opponentTeamName.value = recap?.opponentTeamName || "";
   form.elements.notes.value = recap?.notes || "";
   state.scorePhotoDataUrl = recap?.photoDataUrl || "";
+  state.scoreHandicapTotals = {
+    our: recap?.ourHandicap || [0, 0, 0],
+    opponent: recap?.opponentHandicap || [0, 0, 0]
+  };
   renderScorePhotoPreview();
   setScoreFormLines(recap?.ourTeamLines, recap?.opponentLines);
   $("#newScoreRecap").textContent = state.editingScoreRecapId ? "Editing recap" : "New recap";
@@ -847,6 +858,7 @@ function hideScoreForm() {
   $("#scoreRecapForm").classList.add("hidden");
   $("#scoreRecapForm").reset();
   state.scorePhotoDataUrl = "";
+  state.scoreHandicapTotals = { our: [0, 0, 0], opponent: [0, 0, 0] };
   renderScorePhotoPreview();
   setScoreFormLines();
   $("#newScoreRecap").textContent = "New recap";
@@ -868,6 +880,8 @@ function scoreFormPayload(form) {
   const payload = Object.fromEntries(new FormData(form));
   payload.ourTeamLines = readScoreLines("our");
   payload.opponentLines = readScoreLines("opponent");
+  payload.ourHandicap = state.scoreHandicapTotals.our;
+  payload.opponentHandicap = state.scoreHandicapTotals.opponent;
   payload.photoDataUrl = state.scorePhotoDataUrl;
   return payload;
 }
@@ -877,35 +891,67 @@ function renderScores() {
     ? state.bowlerStats.map((bowler) => `
       <tr>
         <td>${escapeHtml(bowler.bowlerName)}</td>
-        <td>${bowler.teamType === "our" ? "3FDP" : "Opponent"}</td>
-        <td>${bowler.weeksBowled}</td>
-        <td>${bowler.subWeeks}</td>
-        <td>${bowler.paidSubWeeks}</td>
-        <td>${bowler.prizeEligibleWeeks}</td>
+        <td>${bowler.games}</td>
+        <td>${bowler.highGame || "-"}</td>
+        <td>${bowler.highSeries || "-"}</td>
         <td>${bowler.average === null ? "-" : bowler.average.toFixed(2)}</td>
         <td>${bowler.handicap === null ? "-" : bowler.handicap}</td>
       </tr>
     `).join("")
-    : `<tr><td colspan="8" class="empty">No score recaps entered yet.</td></tr>`;
+    : `<tr><td colspan="6" class="empty">No 3FDP scores entered yet.</td></tr>`;
 
-  $("#scoreRecaps").innerHTML = state.scoreRecaps.length
-    ? state.scoreRecaps.map(renderScoreRecap).join("")
+  renderPrizeRows();
+  renderScoreWeekFilter();
+  const filteredRecaps = state.selectedScoreWeek
+    ? state.scoreRecaps.filter((recap) => String(recap.week || "") === state.selectedScoreWeek)
+    : state.scoreRecaps;
+  $("#scoreRecaps").innerHTML = filteredRecaps.length
+    ? filteredRecaps.map(renderScoreRecap).join("")
     : `<p class="empty">No weekly recaps yet.</p>`;
 }
 
-function renderScoreTeam(lines, label) {
+function renderPrizeRows() {
+  const pot = Number(state.prizePot || 0);
+  const rows = state.prizeRows || [];
+  const target = $("#prizeRows");
+  if (!target) return;
+  $("#prizePotForm input[name='prizePot']").value = state.prizePot || "";
+  target.innerHTML = rows.length
+    ? rows.map((row) => `
+      <tr>
+        <td>${escapeHtml(row.bowlerName)}</td>
+        <td>${row.gamesBowled}</td>
+        <td>${row.paidGames}</td>
+        <td>${row.unpaidSubGames}</td>
+        <td>${row.paidPercent.toFixed(2)}%</td>
+        <td>${pot ? `$${((pot * row.paidPercent) / 100).toFixed(2)}` : "-"}</td>
+      </tr>
+    `).join("")
+    : `<tr><td colspan="6" class="empty">No prize data yet.</td></tr>`;
+}
+
+function renderScoreWeekFilter() {
+  const select = $("#scoreWeekFilter");
+  if (!select) return;
+  const weeks = [...new Set(state.scoreRecaps.map((recap) => String(recap.week || "").trim()).filter(Boolean))]
+    .sort((a, b) => Number(a) - Number(b) || a.localeCompare(b));
+  if (state.selectedScoreWeek && !weeks.includes(state.selectedScoreWeek)) state.selectedScoreWeek = "";
+  select.innerHTML = `<option value="">All weeks</option>${weeks.map((week) => `<option value="${escapeHtml(week)}" ${week === state.selectedScoreWeek ? "selected" : ""}>Week ${escapeHtml(week)}</option>`).join("")}`;
+}
+
+function renderScoreTeam(lines, label, options = {}) {
   return `
     <div class="score-card">
       <h3>${escapeHtml(label)}</h3>
-      <div class="recap-grid recap-grid-head"><span>Bowler</span><span>1st</span><span>2nd</span><span>3rd</span><span>Total</span><span>Flags</span></div>
+      <div class="recap-grid ${options.hideFlags ? "no-flags" : ""} recap-grid-head"><span>Bowler</span><span>1st</span><span>2nd</span><span>3rd</span><span>Total</span>${options.hideFlags ? "" : "<span>Flags</span>"}</div>
       ${lines.length ? lines.map((line) => `
-        <div class="recap-grid">
+        <div class="recap-grid ${options.hideFlags ? "no-flags" : ""}">
           <span>${escapeHtml(line.bowlerName)}</span>
           <span>${line.game1}</span>
           <span>${line.game2}</span>
           <span>${line.game3}</span>
           <span>${line.series}</span>
-          <span>${line.isSub ? `Sub${line.paid ? " paid" : " unpaid"}` : (line.paid ? "Paid" : "-")}</span>
+          ${options.hideFlags ? "" : `<span>${line.isSub ? `Sub${line.paid ? " paid" : " unpaid"}` : (line.paid ? "Paid" : "-")}</span>`}
         </div>
       `).join("") : `<p class="empty">No opponent scores captured.</p>`}
     </div>
@@ -922,26 +968,31 @@ function renderScoreRecap(recap) {
     `
     : "";
   const totals = recap.totals;
+  const gameResult = (index) => {
+    const margin = totals.margins[index];
+    if (margin === null) return "";
+    return margin > 0 ? "Won" : margin < 0 ? "Lost" : "Tie";
+  };
   return `
     <article class="score-recap" data-score-recap-id="${recap.id}">
       <div class="score-recap-heading">
         <div>
           <p class="eyebrow">${escapeHtml(formatDate(recap.date))}${recap.week ? ` - Week ${escapeHtml(recap.week)}` : ""}</p>
           <h3>${escapeHtml(recap.ourTeamName || "3FDP")} vs ${escapeHtml(recap.opponentTeamName || "Opponent")}</h3>
-          <p class="muted">Series ${totals.ourSeries}${totals.opponentSeries ? ` to ${totals.opponentSeries}` : ""}${totals.seriesMargin !== null ? ` (${totals.seriesMargin >= 0 ? "+" : ""}${totals.seriesMargin})` : ""}</p>
+          <p class="muted">Handicap series ${totals.ourSeriesWithHandicap}${totals.opponentSeriesWithHandicap ? ` to ${totals.opponentSeriesWithHandicap}` : ""}${totals.seriesMargin !== null ? ` (${totals.seriesMargin >= 0 ? "+" : ""}${totals.seriesMargin})` : ""}</p>
         </div>
         ${adminControls}
       </div>
       <div class="score-match-summary">
-        <span>Game 1: ${totals.ourPins[0]}${totals.opponentPins[0] ? ` / ${totals.opponentPins[0]} (${totals.margins[0] >= 0 ? "+" : ""}${totals.margins[0]})` : ""}</span>
-        <span>Game 2: ${totals.ourPins[1]}${totals.opponentPins[1] ? ` / ${totals.opponentPins[1]} (${totals.margins[1] >= 0 ? "+" : ""}${totals.margins[1]})` : ""}</span>
-        <span>Game 3: ${totals.ourPins[2]}${totals.opponentPins[2] ? ` / ${totals.opponentPins[2]} (${totals.margins[2] >= 0 ? "+" : ""}${totals.margins[2]})` : ""}</span>
+        <span>Game 1: ${totals.ourWithHandicap[0]}${totals.opponentWithHandicap[0] ? ` / ${totals.opponentWithHandicap[0]} (${gameResult(0)})` : ""}</span>
+        <span>Game 2: ${totals.ourWithHandicap[1]}${totals.opponentWithHandicap[1] ? ` / ${totals.opponentWithHandicap[1]} (${gameResult(1)})` : ""}</span>
+        <span>Game 3: ${totals.ourWithHandicap[2]}${totals.opponentWithHandicap[2] ? ` / ${totals.opponentWithHandicap[2]} (${gameResult(2)})` : ""}</span>
       </div>
       ${recap.notes ? `<p class="admin-note"><strong>Admin note:</strong> ${escapeHtml(recap.notes)}</p>` : ""}
-      ${recap.photoDataUrl ? `<img class="score-photo" src="${recap.photoDataUrl}" alt="Recap photo for ${escapeHtml(formatDate(recap.date))}">` : ""}
+      ${recap.photoDataUrl ? `<details class="score-photo-details"><summary>View image</summary><img class="score-photo" src="${recap.photoDataUrl}" alt="Recap photo for ${escapeHtml(formatDate(recap.date))}"></details>` : ""}
       <div class="score-team-wrap">
         ${renderScoreTeam(recap.ourTeamLines, recap.ourTeamName || "3FDP")}
-        ${renderScoreTeam(recap.opponentLines, recap.opponentTeamName || "Opponent")}
+        ${renderScoreTeam(recap.opponentLines, recap.opponentTeamName || "Opponent", { hideFlags: true })}
       </div>
     </article>
   `;
@@ -1572,6 +1623,19 @@ $("#toggleWeightLog").addEventListener("click", () => {
   renderWeights();
 });
 
+$("#scoreWeekFilter").addEventListener("change", (event) => {
+  state.selectedScoreWeek = event.currentTarget.value;
+  renderScores();
+});
+
+$("#prizePotForm").addEventListener("submit", (event) => {
+  event.preventDefault();
+  state.prizePot = Number(new FormData(event.currentTarget).get("prizePot") || 0);
+  localStorage.setItem("prizePot", String(state.prizePot || 0));
+  renderPrizeRows();
+  toast("Prize money calculated.");
+});
+
 $("#newScoreRecap").addEventListener("click", () => showScoreForm());
 
 $("#cancelScoreEdit").addEventListener("click", () => hideScoreForm());
@@ -1629,6 +1693,10 @@ $("#scanScorePhoto").addEventListener("click", async () => {
     const data = await api("/api/scores/scan", { method: "POST", body: JSON.stringify({ photoDataUrl: state.scorePhotoDataUrl }) });
     if (data.ourTeamName) $("#scoreRecapForm").elements.ourTeamName.value = data.ourTeamName;
     if (data.opponentTeamName) $("#scoreRecapForm").elements.opponentTeamName.value = data.opponentTeamName;
+    state.scoreHandicapTotals = {
+      our: data.ourHandicap || [0, 0, 0],
+      opponent: data.opponentHandicap || [0, 0, 0]
+    };
     setScoreFormLines(
       mergeScannedLines(existingOur, data.ourTeamLines || []),
       mergeScannedLines(existingOpponent, data.opponentLines || [])

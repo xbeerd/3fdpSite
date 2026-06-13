@@ -60,7 +60,7 @@ VAPID_SUBJECT
 
 `VAPID_SUBJECT` should be a contact URI such as `mailto:you@example.com`.
 
-Push alerts are used for sub requests and for notifying a blog post author when another user replies to their post.
+Push alerts are used for sub requests, new blog posts, and blog replies.
 
 ## Score Recap Scanning
 

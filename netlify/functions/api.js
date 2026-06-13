@@ -654,24 +654,18 @@ async function sendSubRequestNotifications(data, request, eventItem) {
   }
 }
 
-async function sendBlogReplyNotification(data, note, comment) {
+async function sendBlogNotification(data, actorUserId, payload) {
   if (!pushConfigured() || !data.pushSubscriptions.length) return;
-  if (!note?.userId || note.userId === comment.userId) return;
-  const subscriptions = data.pushSubscriptions.filter((saved) => saved.userId === note.userId);
+  const subscriptions = data.pushSubscriptions.filter((saved) => saved.userId !== actorUserId);
   if (!subscriptions.length) return;
-  const payload = JSON.stringify({
-    title: "3FDP blog reply",
-    body: `${comment.username} replied to your post.`,
-    url: "/#home",
-    tag: `blog-reply-${note.id}`
-  });
+  const notification = JSON.stringify({ url: "/#home", ...payload });
   const expired = new Set();
   await Promise.all(subscriptions.map(async (saved) => {
     try {
-      await webPush.sendNotification(saved.subscription, payload);
+      await webPush.sendNotification(saved.subscription, notification);
     } catch (error) {
       if (error.statusCode === 404 || error.statusCode === 410) expired.add(saved.id);
-      else console.error("Blog reply push notification failed:", error.message || error);
+      else console.error("Blog push notification failed:", error.message || error);
     }
   }));
   if (expired.size) {
@@ -892,6 +886,11 @@ exports.handler = async (event) => {
       const note = { id: crypto.randomUUID(), userId: user.id, username: user.username, text, photoDataUrl, comments: [], createdAt: new Date().toISOString() };
       data.notes.push(note);
       await saveData(data);
+      await sendBlogNotification(data, user.id, {
+        title: "3FDP blog post",
+        body: `${user.username} posted a team note.`,
+        tag: `blog-post-${note.id}`
+      });
       return json(201, { notes: sortedNotes(data), note: normalizeNote(note) });
     }
 
@@ -927,7 +926,11 @@ exports.handler = async (event) => {
       const comment = { id: crypto.randomUUID(), userId: user.id, username: user.username, text, createdAt: new Date().toISOString() };
       note.comments.push(comment);
       await saveData(data);
-      await sendBlogReplyNotification(data, note, comment);
+      await sendBlogNotification(data, user.id, {
+        title: "3FDP blog reply",
+        body: `${user.username} replied to a team note.`,
+        tag: `blog-reply-${note.id}`
+      });
       return json(201, { notes: sortedNotes(data), comment });
     }
 

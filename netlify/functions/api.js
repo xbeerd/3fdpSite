@@ -352,6 +352,7 @@ function findSubRequest(data, requestId) {
 function eventDuplicateKey(row) {
   return [
     row.date,
+    row.title,
     row.lane,
     row.opponent,
     row.startTime,
@@ -1039,6 +1040,7 @@ exports.handler = async (event) => {
       let importedCount = 0;
       let skippedDuplicateCount = 0;
       let invalidCount = 0;
+      const savedEventIds = [];
       for (const row of rows) {
         if (!ymdToDateParts(row.date)) {
           invalidCount += 1;
@@ -1058,11 +1060,13 @@ exports.handler = async (event) => {
           data.calendarEvents.push(eventItem);
           importedCount += 1;
         }
+        savedEventIds.push(eventItem.id);
       }
       await saveData(data);
       return json(200, {
         events: data.calendarEvents,
         importId: importedCount ? importId : "",
+        savedEventIds,
         importedCount,
         skippedDuplicateCount,
         invalidCount

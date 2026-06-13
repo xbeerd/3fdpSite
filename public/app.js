@@ -289,6 +289,25 @@ async function refreshBootstrap() {
   if (state.user?.role === "admin") await refreshAdmin();
 }
 
+async function refreshCalendarState(preferredEventId = "") {
+  const data = await api("/api/bootstrap");
+  state.config = data.config;
+  state.schedule = data.schedule;
+  state.notes = data.notes;
+  state.events = data.events;
+  state.subRequests = data.subRequests;
+  state.adminSetupOpen = Boolean(data.adminSetupOpen);
+  if (preferredEventId && state.events.some((eventItem) => eventItem.id === preferredEventId)) {
+    state.selectedCalendarEventId = preferredEventId;
+  } else if (!selectedCalendarEvent()) {
+    state.selectedCalendarEventId = null;
+  }
+  renderHome();
+  renderCalendar();
+  renderContestHeader();
+  renderProfileOptions();
+}
+
 async function refreshWeightsAndBoard() {
   const weights = await api("/api/weights");
   state.weights = weights.weights;
@@ -1477,17 +1496,9 @@ $("#calendarList").addEventListener("click", async (event) => {
       previousEvents = [...state.events];
       previousSubRequests = [...state.subRequests];
       previousSelection = state.selectedCalendarEventId;
-      state.events = state.events.filter((eventItem) => eventItem.id !== eventId);
-      state.subRequests = state.subRequests.filter((request) => request.eventId !== eventId);
-      if (state.selectedCalendarEventId === eventId) state.selectedCalendarEventId = null;
-      renderHome();
-      renderCalendar();
       const data = await api(`/api/calendar/events/${deleteEventButton.dataset.deleteEvent}`, { method: "DELETE" });
-      state.events = data.events;
-      state.subRequests = data.subRequests;
-      if (!selectedCalendarEvent()) state.selectedCalendarEventId = null;
-      renderHome();
-      renderCalendar();
+      if (state.selectedCalendarEventId === eventId) state.selectedCalendarEventId = null;
+      await refreshCalendarState();
       toast(`${data.removedCount || 1} calendar event${data.removedCount === 1 ? "" : "s"} removed.`);
       return;
     }
@@ -1519,16 +1530,9 @@ $("#calendarList").addEventListener("click", async (event) => {
       return;
     }
     if (deleteSubButton && confirm("Cancel this sub request?")) {
-      const request = state.subRequests.find((item) => item.id === deleteSubButton.dataset.deleteSubRequest);
       previousSubRequests = [...state.subRequests];
-      if (request) state.subRequests = state.subRequests.filter((item) => item.eventId !== request.eventId);
-      else state.subRequests = state.subRequests.filter((item) => item.id !== deleteSubButton.dataset.deleteSubRequest);
-      renderHome();
-      renderCalendar();
       const data = await api(`/api/sub-requests/${deleteSubButton.dataset.deleteSubRequest}`, { method: "DELETE" });
-      state.subRequests = data.subRequests;
-      renderHome();
-      renderCalendar();
+      await refreshCalendarState(state.selectedCalendarEventId);
       toast(`${data.removedCount || 1} sub request${data.removedCount === 1 ? "" : "s"} canceled.`);
     }
   } catch (error) {
@@ -1579,11 +1583,11 @@ $("#quickEventForm").addEventListener("submit", async (event) => {
     payload.title = String(payload.title || "").trim() || (payload.opponent ? `Bowling vs ${payload.opponent}` : "Bowling");
     if (editingEventId) payload.id = editingEventId;
     const data = await api("/api/calendar/events", { method: "POST", body: JSON.stringify(payload) });
-    state.events = data.events;
-    state.selectedCalendarEventId = editingEventId || [...state.events].sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)))[0]?.id || state.selectedCalendarEventId;
+    const savedEventId = editingEventId || data.savedEventIds?.[0] || "";
+    state.selectedCalendarEventId = savedEventId || state.selectedCalendarEventId;
     if (editingEventId) state.calendarCursor = String(payload.date || "").slice(0, 7) || state.calendarCursor;
     resetCalendarEventForm();
-    renderCalendar();
+    await refreshCalendarState(savedEventId);
     toast(editingEventId ? "Calendar event updated." : (data.skippedDuplicateCount ? "Duplicate event skipped." : "Calendar event added."));
   } catch (error) {
     toast(error.message);
@@ -1913,25 +1917,16 @@ $("#csvForm").addEventListener("submit", async (event) => {
   const previousImportId = state.lastImportId;
   try {
     const events = csvToEvents(await file.text());
-    const deleteKeys = new Set(events.map(calendarEventKey));
     if (action === "delete") {
-      state.events = state.events.filter((eventItem) => !deleteKeys.has(calendarEventKey(eventItem)));
-      state.subRequests = state.subRequests.filter((request) => state.events.some((eventItem) => eventItem.id === request.eventId));
       state.lastImportId = "";
       updateUndoImportButton();
-      renderHome();
-      renderCalendar();
     }
     const data = action === "delete"
       ? await api("/api/calendar/events/delete-by-csv", { method: "POST", body: JSON.stringify({ events }) })
       : await api("/api/calendar/events", { method: "POST", body: JSON.stringify({ events }) });
-    state.events = data.events;
-    state.subRequests = (data.subRequests || state.subRequests).filter((request) => state.events.some((eventItem) => eventItem.id === request.eventId));
     state.lastImportId = action === "upload" ? (data.importId || "") : "";
     updateUndoImportButton();
-    state.selectedCalendarEventId = selectedCalendarEvent() ? state.selectedCalendarEventId : null;
-    renderHome();
-    renderCalendar();
+    await refreshCalendarState(data.savedEventIds?.[0] || state.selectedCalendarEventId || "");
     const message = action === "delete"
       ? `Schedule CSV delete complete: ${data.removedCount || 0} event${data.removedCount === 1 ? "" : "s"} removed${data.invalidCount ? `, ${data.invalidCount} invalid row${data.invalidCount === 1 ? "" : "s"} skipped` : ""}.`
       : importSummary(data);
@@ -1962,15 +1957,10 @@ $("#undoCsvImport").addEventListener("click", async () => {
   const previousImportId = state.lastImportId;
   button.disabled = true;
   try {
-    state.events = state.events.filter((eventItem) => eventItem.importId !== importId);
-    state.subRequests = state.subRequests.filter((request) => state.events.some((eventItem) => eventItem.id === request.eventId));
     state.lastImportId = "";
     updateUndoImportButton();
-    renderHome();
-    renderCalendar();
     const data = await api(`/api/calendar/imports/${importId}`, { method: "DELETE" });
-    state.events = data.events;
-    state.subRequests = data.subRequests.filter((request) => state.events.some((eventItem) => eventItem.id === request.eventId));
+    await refreshCalendarState(state.selectedCalendarEventId || "");
     const message = `Last schedule upload undone: ${data.removedCount} event${data.removedCount === 1 ? "" : "s"} removed.`;
     setActionStatus("#csvStatus", message);
     toast(message);

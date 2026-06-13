@@ -23,6 +23,7 @@ const state = {
   notePhotoDataUrl: "",
   editingCalendarEventId: "",
   scoreHandicapTotals: { our: [0, 0, 0], opponent: [0, 0, 0] },
+  scoreGameTotals: { our: [0, 0, 0], opponent: [0, 0, 0] },
   selectedScoreWeek: "",
   prizePot: Number(localStorage.getItem("prizePot") || 0),
   calendarCursor: new Date().toISOString().slice(0, 7),
@@ -848,6 +849,10 @@ function showScoreForm(recap = null) {
     our: recap?.ourHandicap || [0, 0, 0],
     opponent: recap?.opponentHandicap || [0, 0, 0]
   };
+  state.scoreGameTotals = {
+    our: recap?.ourTotals || [0, 0, 0],
+    opponent: recap?.opponentTotals || [0, 0, 0]
+  };
   renderScorePhotoPreview();
   setScoreFormLines(recap?.ourTeamLines, recap?.opponentLines);
   $("#newScoreRecap").textContent = state.editingScoreRecapId ? "Editing recap" : "New recap";
@@ -859,6 +864,7 @@ function hideScoreForm() {
   $("#scoreRecapForm").reset();
   state.scorePhotoDataUrl = "";
   state.scoreHandicapTotals = { our: [0, 0, 0], opponent: [0, 0, 0] };
+  state.scoreGameTotals = { our: [0, 0, 0], opponent: [0, 0, 0] };
   renderScorePhotoPreview();
   setScoreFormLines();
   $("#newScoreRecap").textContent = "New recap";
@@ -882,8 +888,17 @@ function scoreFormPayload(form) {
   payload.opponentLines = readScoreLines("opponent");
   payload.ourHandicap = state.scoreHandicapTotals.our;
   payload.opponentHandicap = state.scoreHandicapTotals.opponent;
+  payload.ourTotals = state.scoreGameTotals.our;
+  payload.opponentTotals = state.scoreGameTotals.opponent;
   payload.photoDataUrl = state.scorePhotoDataUrl;
   return payload;
+}
+
+function applyScoreDashboard(data) {
+  state.scoreRecaps = data.recaps;
+  state.bowlerStats = data.bowlers;
+  state.prizeRows = data.prizeRows || [];
+  state.totalPaidGames = data.totalPaidGames || 0;
 }
 
 function renderScores() {
@@ -962,6 +977,7 @@ function renderScoreRecap(recap) {
   const adminControls = state.user?.role === "admin"
     ? `
       <div class="row-actions">
+        ${recap.photoDataUrl ? `<button class="small ghost" type="button" data-rescan-score-recap="${recap.id}">Rescan image</button>` : ""}
         <button class="small ghost" type="button" data-edit-score-recap="${recap.id}">Edit</button>
         <button class="small danger" type="button" data-delete-score-recap="${recap.id}">Delete</button>
       </div>
@@ -1697,6 +1713,10 @@ $("#scanScorePhoto").addEventListener("click", async () => {
       our: data.ourHandicap || [0, 0, 0],
       opponent: data.opponentHandicap || [0, 0, 0]
     };
+    state.scoreGameTotals = {
+      our: data.ourTotals || [0, 0, 0],
+      opponent: data.opponentTotals || [0, 0, 0]
+    };
     setScoreFormLines(
       mergeScannedLines(existingOur, data.ourTeamLines || []),
       mergeScannedLines(existingOpponent, data.opponentLines || [])
@@ -1724,8 +1744,7 @@ $("#scoreRecapForm").addEventListener("submit", async (event) => {
     const method = state.editingScoreRecapId ? "PUT" : "POST";
     const path = state.editingScoreRecapId ? `/api/scores/recaps/${state.editingScoreRecapId}` : "/api/scores/recaps";
     const data = await api(path, { method, body: JSON.stringify(payload) });
-    state.scoreRecaps = data.recaps;
-    state.bowlerStats = data.bowlers;
+    applyScoreDashboard(data);
     hideScoreForm();
     renderScores();
     setActionStatus("#scoreStatus", "Score recap saved.");
@@ -1741,15 +1760,49 @@ $("#scoreRecapForm").addEventListener("submit", async (event) => {
 $("#scoreRecaps").addEventListener("click", async (event) => {
   const edit = event.target.closest("[data-edit-score-recap]");
   const del = event.target.closest("[data-delete-score-recap]");
-  if (!edit && !del) return;
-  const actionButton = edit || del;
+  const rescan = event.target.closest("[data-rescan-score-recap]");
+  if (!edit && !del && !rescan) return;
+  const actionButton = edit || del || rescan;
   actionButton.disabled = true;
   const previousRecaps = [...state.scoreRecaps];
   const previousBowlers = [...state.bowlerStats];
+  const previousPrizeRows = [...state.prizeRows];
+  const previousTotalPaidGames = state.totalPaidGames;
   try {
     if (edit) {
       const recap = state.scoreRecaps.find((item) => item.id === edit.dataset.editScoreRecap);
       if (recap) showScoreForm(recap);
+      return;
+    }
+    if (rescan) {
+      const recap = state.scoreRecaps.find((item) => item.id === rescan.dataset.rescanScoreRecap);
+      if (!recap?.photoDataUrl) throw new Error("This recap does not have an image to rescan.");
+      const originalText = rescan.textContent;
+      rescan.textContent = "Rescanning...";
+      const scan = await api("/api/scores/scan", { method: "POST", body: JSON.stringify({ photoDataUrl: recap.photoDataUrl }) });
+      const data = await api(`/api/scores/recaps/${recap.id}`, {
+        method: "PUT",
+        body: JSON.stringify({
+          date: recap.date,
+          week: recap.week || "",
+          ourTeamName: scan.ourTeamName || recap.ourTeamName || "3FDP",
+          opponentTeamName: scan.opponentTeamName || recap.opponentTeamName || "",
+          ourTeamLines: (scan.ourTeamLines || []).length ? scan.ourTeamLines : recap.ourTeamLines,
+          opponentLines: (scan.opponentLines || []).length ? scan.opponentLines : recap.opponentLines,
+          ourHandicap: scan.ourHandicap || recap.ourHandicap || [0, 0, 0],
+          opponentHandicap: scan.opponentHandicap || recap.opponentHandicap || [0, 0, 0],
+          ourTotals: scan.ourTotals || recap.ourTotals || [0, 0, 0],
+          opponentTotals: scan.opponentTotals || recap.opponentTotals || [0, 0, 0],
+          notes: recap.notes || "",
+          photoDataUrl: recap.photoDataUrl
+        })
+      });
+      applyScoreDashboard(data);
+      renderScores();
+      const warningText = scan.warnings?.length ? ` ${scan.warnings.join(" ")}` : "";
+      setActionStatus("#scoreStatus", "Score recap rescanned.");
+      toast(`Score recap rescanned.${warningText}`);
+      if (rescan.isConnected) rescan.textContent = originalText;
       return;
     }
     if (del && confirm("Delete this score recap?")) {
@@ -1757,8 +1810,7 @@ $("#scoreRecaps").addEventListener("click", async (event) => {
       state.scoreRecaps = state.scoreRecaps.filter((recap) => recap.id !== recapId);
       renderScores();
       const data = await api(`/api/scores/recaps/${recapId}`, { method: "DELETE" });
-      state.scoreRecaps = data.recaps;
-      state.bowlerStats = data.bowlers;
+      applyScoreDashboard(data);
       renderScores();
       setActionStatus("#scoreStatus", "Score recap deleted.");
       toast("Score recap deleted.");
@@ -1766,6 +1818,8 @@ $("#scoreRecaps").addEventListener("click", async (event) => {
   } catch (error) {
     state.scoreRecaps = previousRecaps;
     state.bowlerStats = previousBowlers;
+    state.prizeRows = previousPrizeRows;
+    state.totalPaidGames = previousTotalPaidGames;
     renderScores();
     setActionStatus("#scoreStatus", error.message);
     toast(error.message);

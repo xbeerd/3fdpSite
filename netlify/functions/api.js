@@ -424,6 +424,27 @@ function normalizeHandicapTotals(value) {
   });
 }
 
+function normalizeGameTotals(value) {
+  const source = Array.isArray(value) ? value : [];
+  return [0, 1, 2].map((index) => {
+    const number = Number(source[index]);
+    return Number.isFinite(number) && number > 0 ? Math.round(number) : 0;
+  });
+}
+
+function scoreTeamPins(lines = []) {
+  return [1, 2, 3].map((game) => lines.reduce((sum, line) => sum + (Number(line[`game${game}`]) || 0), 0));
+}
+
+function deriveHandicapFromTotals(pins, handicap, totals) {
+  return handicap.map((value, index) => {
+    if (value) return value;
+    const total = totals[index];
+    const scratch = pins[index];
+    return total > scratch ? total - scratch : 0;
+  });
+}
+
 function normalizeScoreLine(line = {}) {
   const bowlerName = String(line.bowlerName || "").trim();
   const scores = {
@@ -457,6 +478,12 @@ function normalizeScoreRecap(body, existing = {}, options = {}) {
   const opponentLines = (Array.isArray(body.opponentLines) ? body.opponentLines : []).map(normalizeScoreLine).filter(Boolean);
   if (!ourTeamLines.length) throw Object.assign(new Error("Add at least one 3FDP bowler score row."), { statusCode: 400 });
   const calendarEvent = options.data?.calendarEvents?.find((eventItem) => eventItem.date === date);
+  const ourPins = scoreTeamPins(ourTeamLines);
+  const opponentPins = scoreTeamPins(opponentLines);
+  const ourTotals = normalizeGameTotals(body.ourTotals || existing.ourTotals);
+  const opponentTotals = normalizeGameTotals(body.opponentTotals || existing.opponentTotals);
+  const ourHandicap = deriveHandicapFromTotals(ourPins, normalizeHandicapTotals(body.ourHandicap || existing.ourHandicap), ourTotals);
+  const opponentHandicap = deriveHandicapFromTotals(opponentPins, normalizeHandicapTotals(body.opponentHandicap || existing.opponentHandicap), opponentTotals);
   return {
     ...existing,
     date,
@@ -465,8 +492,10 @@ function normalizeScoreRecap(body, existing = {}, options = {}) {
     opponentTeamName: String(calendarEvent?.opponent || body.opponentTeamName || "").trim(),
     ourTeamLines,
     opponentLines,
-    ourHandicap: normalizeHandicapTotals(body.ourHandicap || existing.ourHandicap),
-    opponentHandicap: normalizeHandicapTotals(body.opponentHandicap || existing.opponentHandicap),
+    ourHandicap,
+    opponentHandicap,
+    ourTotals,
+    opponentTotals,
     notes: options.canEditAdminNote ? String(body.notes || "").trim() : (existing.notes || ""),
     photoDataUrl: normalizeScorePhoto(body.photoDataUrl)
   };
@@ -474,8 +503,8 @@ function normalizeScoreRecap(body, existing = {}, options = {}) {
 
 function publicScoreRecap(recap, user = null) {
   const lineWithTotal = (line) => ({ ...line, series: scoreLineTotal(line) });
-  const ourPins = [1, 2, 3].map((game) => recap.ourTeamLines.reduce((sum, line) => sum + line[`game${game}`], 0));
-  const opponentPins = [1, 2, 3].map((game) => recap.opponentLines.reduce((sum, line) => sum + line[`game${game}`], 0));
+  const ourPins = scoreTeamPins(recap.ourTeamLines);
+  const opponentPins = scoreTeamPins(recap.opponentLines);
   const ourHandicap = normalizeHandicapTotals(recap.ourHandicap);
   const opponentHandicap = normalizeHandicapTotals(recap.opponentHandicap);
   const ourWithHandicap = ourPins.map((score, index) => score + ourHandicap[index]);
@@ -632,9 +661,10 @@ async function scanScorePhoto(photoDataUrl) {
             text: [
               "Read this bowling recap screen and return only valid JSON.",
               "Extract both teams if visible. If only one team is visible, put it in ourTeamLines if it appears to be 3 Finger Death Punch / 3 Finger Dea / 3 FDP, otherwise use opponentLines.",
-              "Do not include totals rows, pins rows, handicap rows, or game totals.",
-              "Do extract the team handicap row labeled +HDCP or handicap as three game numbers for each team when visible.",
-              "Use this shape exactly: {\"ourTeamName\":\"\",\"opponentTeamName\":\"\",\"ourHandicap\":[0,0,0],\"opponentHandicap\":[0,0,0],\"ourTeamLines\":[{\"bowlerName\":\"\",\"game1\":0,\"game2\":0,\"game3\":0}],\"opponentLines\":[{\"bowlerName\":\"\",\"game1\":0,\"game2\":0,\"game3\":0}],\"warnings\":[]}.",
+              "Only include individual bowlers in ourTeamLines and opponentLines; do not include Pins, +HDCP, Totals, or other summary rows as bowlers.",
+              "Extract the team handicap row labeled +HDCP or handicap as three game numbers for each team when visible.",
+              "Also extract the bottom Totals row for each team as ourTotals and opponentTotals when visible. These are fallback values; Pins can be calculated by adding individual bowler games vertically and Totals can be calculated as Pins plus +HDCP.",
+              "Use this shape exactly: {\"ourTeamName\":\"\",\"opponentTeamName\":\"\",\"ourHandicap\":[0,0,0],\"opponentHandicap\":[0,0,0],\"ourTotals\":[0,0,0],\"opponentTotals\":[0,0,0],\"ourTeamLines\":[{\"bowlerName\":\"\",\"game1\":0,\"game2\":0,\"game3\":0}],\"opponentLines\":[{\"bowlerName\":\"\",\"game1\":0,\"game2\":0,\"game3\":0}],\"warnings\":[]}.",
               "If uncertain about a digit or name, still give your best guess and add a warning."
             ].join(" ")
           },
@@ -658,6 +688,8 @@ async function scanScorePhoto(photoDataUrl) {
     opponentTeamName: String(parsed.opponentTeamName || "").trim(),
     ourHandicap: normalizeHandicapTotals(parsed.ourHandicap),
     opponentHandicap: normalizeHandicapTotals(parsed.opponentHandicap),
+    ourTotals: normalizeGameTotals(parsed.ourTotals),
+    opponentTotals: normalizeGameTotals(parsed.opponentTotals),
     ourTeamLines: (Array.isArray(parsed.ourTeamLines) ? parsed.ourTeamLines : []).map(normalizeScannedLine).filter(Boolean),
     opponentLines: (Array.isArray(parsed.opponentLines) ? parsed.opponentLines : []).map(normalizeScannedLine).filter(Boolean),
     warnings: Array.isArray(parsed.warnings) ? parsed.warnings.map((warning) => String(warning)).filter(Boolean).slice(0, 5) : []

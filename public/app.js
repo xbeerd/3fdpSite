@@ -348,6 +348,52 @@ async function refreshNotes() {
   renderHome();
 }
 
+async function refreshCurrentView() {
+  if (!state.user) {
+    const me = await api("/api/me");
+    state.user = me.user;
+    await refreshBootstrap();
+    renderShell();
+    return;
+  }
+  if (state.view === "home") {
+    const data = await api("/api/bootstrap");
+    state.notes = data.notes;
+    state.subRequests = data.subRequests;
+    renderHome();
+    return;
+  }
+  if (state.view === "calendar") {
+    await refreshCalendarState(state.selectedCalendarEventId || "");
+    return;
+  }
+  if (state.view === "scores") {
+    await refreshScores();
+    return;
+  }
+  if (state.view === "loser") {
+    await refreshWeightsAndBoard();
+    return;
+  }
+  if (state.view === "options") {
+    const me = await api("/api/me");
+    state.user = me.user;
+    renderProfileOptions();
+    await refreshPushState();
+    return;
+  }
+  if (state.view === "admin" && state.user?.role === "admin") {
+    const data = await api("/api/bootstrap");
+    state.config = data.config;
+    state.schedule = data.schedule;
+    renderContestHeader();
+    await refreshAdmin();
+    return;
+  }
+  await refreshBootstrap();
+  renderShell();
+}
+
 function pushSupported() {
   return "serviceWorker" in navigator && "PushManager" in window && "Notification" in window;
 }
@@ -1234,7 +1280,21 @@ async function init() {
 }
 
 $("#menuBtn").addEventListener("click", () => $("#menu").classList.toggle("hidden"));
-$("#refreshApp").addEventListener("click", () => window.location.reload());
+$("#refreshApp").addEventListener("click", async () => {
+  const button = $("#refreshApp");
+  if (button.disabled) return;
+  button.disabled = true;
+  button.classList.add("is-refreshing");
+  try {
+    await refreshCurrentView();
+    toast("Page refreshed.");
+  } catch (error) {
+    toast(error.message);
+  } finally {
+    button.disabled = false;
+    button.classList.remove("is-refreshing");
+  }
+});
 $$("[data-view]").forEach((button) => button.addEventListener("click", () => setView(button.dataset.view)));
 $("#showRegister").addEventListener("click", () => showRegisterForm(true));
 $("#showLogin").addEventListener("click", () => showRegisterForm(false));

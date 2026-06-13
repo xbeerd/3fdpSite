@@ -105,6 +105,20 @@ button:hover { background: var(--accent-dark); }
   border: 1px solid var(--line);
 }
 
+.refresh-button {
+  font-size: 1.45rem;
+  font-weight: 900;
+  line-height: 1;
+}
+
+.refresh-button.is-refreshing {
+  animation: refresh-spin 0.8s linear infinite;
+}
+
+@keyframes refresh-spin {
+  to { transform: rotate(360deg); }
+}
+
 .menu {
   position: fixed;
   top: 76px;

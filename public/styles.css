@@ -127,6 +127,22 @@ button:hover { background: var(--accent-dark); }
   font-size: 1.15rem;
 }
 
+.menu-button {
+  display: inline-flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+  gap: 5px;
+}
+
+.menu-button span {
+  display: block;
+  width: 20px;
+  height: 3px;
+  background: var(--text);
+  border-radius: 999px;
+}
+
 .notification-badge {
   position: absolute;
   top: -0.25rem;
@@ -380,6 +396,10 @@ textarea:-webkit-autofill {
 
 .section-heading > * { min-width: 0; }
 
+.score-filter-heading {
+  justify-content: flex-end;
+}
+
 .status-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
@@ -602,6 +622,14 @@ textarea:-webkit-autofill {
 .segmented button.is-active {
   color: var(--text);
   background: #f6c28f;
+}
+
+#scoreModeControls {
+  flex-wrap: nowrap;
+}
+
+#scoreModeControls button {
+  white-space: nowrap;
 }
 
 .range-controls {
@@ -1052,6 +1080,16 @@ td .muted { display: block; margin-top: 0.2rem; font-size: 0.8rem; }
   .segmented {
     display: grid;
     grid-template-columns: 1fr;
+  }
+  #scoreModeControls {
+    display: flex;
+    width: 100%;
+  }
+  #scoreModeControls button {
+    flex: 1 1 0;
+    min-width: 0;
+    padding: 0.56rem 0.28rem;
+    font-size: 0.72rem;
   }
   .calendar-toolbar { grid-template-columns: 1fr; }
   .calendar-toolbar strong { order: -1; }

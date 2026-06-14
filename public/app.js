@@ -16,7 +16,7 @@ const state = {
   adminSetupOpen: false,
   pushConfigured: false,
   pushSubscribed: false,
-  pushPreferences: { subAlerts: true, blogAlerts: true },
+  pushPreferences: { subAlerts: true, blogAlerts: true, chatAlerts: true },
   boardMode: "main",
   scoreMode: "bowlers",
   manualScoreEntryOpen: false,
@@ -41,6 +41,7 @@ const state = {
 
 const $ = (selector) => document.querySelector(selector);
 const $$ = (selector) => [...document.querySelectorAll(selector)];
+let notificationPollId = null;
 
 function escapeHtml(value) {
   return String(value ?? "").replace(/[&<>"']/g, (character) => ({
@@ -160,6 +161,7 @@ function showRegisterForm(show) {
 
 async function logout() {
   await api("/api/logout", { method: "POST" });
+  stopNotificationPolling();
   state.user = null;
   state.chatMessages = [];
   state.chatOpen = false;
@@ -230,7 +232,7 @@ function buildNotifications() {
   const subSeenAt = notificationSeenAt("sub");
   return [
     ...state.chatMessages
-      .filter((message) => message.userId !== state.user?.id && String(message.createdAt || "") > chatSeenAt)
+      .filter((message) => !state.chatOpen && message.userId !== state.user?.id && String(message.createdAt || "") > chatSeenAt)
       .map((message) => ({
         id: `chat-${message.id}`,
         type: "chat",
@@ -266,6 +268,10 @@ function markNotificationsSeen() {
   setNotificationSeenAt("chat", maxTimestamp(state.chatMessages.map((message) => message.createdAt)));
   setNotificationSeenAt("calendar", maxTimestamp(state.events.map((eventItem) => eventItem.createdAt)));
   setNotificationSeenAt("sub", maxTimestamp(state.subRequests.map((request) => request.updatedAt || request.createdAt)));
+}
+
+function markChatNotificationsSeen() {
+  setNotificationSeenAt("chat", maxTimestamp(state.chatMessages.map((message) => message.createdAt)));
 }
 
 function todayYmd() {
@@ -331,6 +337,8 @@ function scoreRecapForDate(date) {
 function showScoreRecap(recapId) {
   const recap = state.scoreRecaps.find((item) => item.id === recapId);
   if (!recap) return toast("Score recap not found.");
+  state.scoreMode = "recaps";
+  state.selectedScoreWeek = String(recap.week || "");
   setView("scores");
   renderScores();
   const node = document.querySelector(`[data-score-recap-id="${CSS.escape(recapId)}"]`);
@@ -450,7 +458,7 @@ async function refreshChatMessages() {
   renderChat();
 }
 
-async function refreshNotifications({ open = false } = {}) {
+async function refreshNotifications({ open = state.notificationOpen, markSeen = false } = {}) {
   if (!state.user) {
     state.notifications = [];
     renderNotifications();
@@ -468,10 +476,30 @@ async function refreshNotifications({ open = false } = {}) {
   state.notifications = buildNotifications();
   state.notificationOpen = open;
   renderNotifications();
-  if (open) {
+  if (state.chatOpen) {
+    renderChat();
+    markChatNotificationsSeen();
+    state.notifications = buildNotifications();
+    renderNotifications();
+  }
+  if (markSeen) {
     markNotificationsSeen();
     renderNotificationBadge(0);
   }
+}
+
+function startNotificationPolling() {
+  if (notificationPollId || !state.user) return;
+  notificationPollId = setInterval(() => {
+    if (document.hidden || !state.user) return;
+    refreshNotifications().catch(() => {});
+  }, 3000);
+}
+
+function stopNotificationPolling() {
+  if (!notificationPollId) return;
+  clearInterval(notificationPollId);
+  notificationPollId = null;
 }
 
 async function refreshCurrentView() {
@@ -532,6 +560,7 @@ function renderPushControls(message = "") {
   if (!visible) return;
   $("#pushSubAlerts").checked = Boolean(state.pushPreferences.subAlerts);
   $("#pushBlogAlerts").checked = Boolean(state.pushPreferences.blogAlerts);
+  $("#pushChatAlerts").checked = Boolean(state.pushPreferences.chatAlerts);
   $("#enablePush").classList.toggle("hidden", state.pushSubscribed);
   $("#disablePush").classList.toggle("hidden", !state.pushSubscribed);
   $("#pushStatus").textContent = message || (state.pushSubscribed ? "Push notifications enabled." : "Push notifications off.");
@@ -551,7 +580,8 @@ async function pushRegistration() {
 function readPushPreferences() {
   return {
     subAlerts: Boolean($("#pushSubAlerts")?.checked),
-    blogAlerts: Boolean($("#pushBlogAlerts")?.checked)
+    blogAlerts: Boolean($("#pushBlogAlerts")?.checked),
+    chatAlerts: Boolean($("#pushChatAlerts")?.checked)
   };
 }
 
@@ -1482,7 +1512,10 @@ async function init() {
   state.view = viewFromHash() || state.view;
   await refreshBootstrap();
   renderShell();
-  if (state.user) await refreshNotifications();
+  if (state.user) {
+    await refreshNotifications();
+    startNotificationPolling();
+  }
 }
 
 $("#menuBtn").addEventListener("click", () => $("#menu").classList.toggle("hidden"));
@@ -1510,7 +1543,7 @@ $("#menuAuthBtn").addEventListener("click", async () => {
 });
 $("#notificationsToggle").addEventListener("click", async () => {
   state.notificationOpen = !state.notificationOpen;
-  if (state.notificationOpen) await refreshNotifications({ open: true }).catch((error) => toast(error.message));
+  if (state.notificationOpen) await refreshNotifications({ open: true, markSeen: true }).catch((error) => toast(error.message));
   else renderNotifications();
 });
 $("#notificationsClose").addEventListener("click", () => {
@@ -1533,7 +1566,12 @@ $("#notificationList").addEventListener("click", async (event) => {
 $("#chatToggle").addEventListener("click", async () => {
   state.chatOpen = !state.chatOpen;
   renderChat();
-  if (state.chatOpen) await refreshChatMessages().catch((error) => toast(error.message));
+  if (state.chatOpen) {
+    await refreshChatMessages().catch((error) => toast(error.message));
+    markChatNotificationsSeen();
+    state.notifications = buildNotifications();
+    renderNotifications();
+  }
 });
 $("#chatClose").addEventListener("click", () => {
   state.chatOpen = false;
@@ -1558,6 +1596,12 @@ $("#chatForm").addEventListener("submit", async (event) => {
   }
 });
 window.addEventListener("hashchange", () => openViewFromHash().catch((error) => toast(error.message)));
+window.addEventListener("focus", () => {
+  if (state.user) refreshNotifications().catch(() => {});
+});
+document.addEventListener("visibilitychange", () => {
+  if (!document.hidden && state.user) refreshNotifications().catch(() => {});
+});
 if ("serviceWorker" in navigator) {
   navigator.serviceWorker.addEventListener("message", (event) => {
     if (event.data?.type === "notification-click") {
@@ -1581,21 +1625,35 @@ $("#pushBlogAlerts").addEventListener("change", () => {
   state.pushPreferences = readPushPreferences();
   if (state.pushSubscribed) savePushPreferences().catch((error) => toast(error.message));
 });
+$("#pushChatAlerts").addEventListener("change", () => {
+  state.pushPreferences = readPushPreferences();
+  if (state.pushSubscribed) savePushPreferences().catch((error) => toast(error.message));
+});
 $("#prevMonth").addEventListener("click", () => moveCalendarMonth(-1));
 $("#nextMonth").addEventListener("click", () => moveCalendarMonth(1));
 
 $("#profileForm").addEventListener("submit", async (event) => {
   event.preventDefault();
   const form = event.currentTarget;
+  const submit = form.querySelector("button[type='submit']");
+  const payload = Object.fromEntries(new FormData(form));
+  const requestedRecapName = String(payload.recapName || "").trim();
+  if (submit) submit.disabled = true;
   try {
-    const data = await api("/api/profile", { method: "PUT", body: JSON.stringify(Object.fromEntries(new FormData(form))) });
-    state.user = data.user;
+    await api("/api/profile", { method: "POST", body: JSON.stringify(payload) });
+    const me = await api("/api/me");
+    state.user = me.user;
+    if (String(state.user?.recapName || "") !== requestedRecapName) {
+      throw new Error("Recap sheet name did not save. Please try again.");
+    }
     renderProfileOptions();
     setActionStatus("#profileStatus", "Options saved.");
     toast("Options saved.");
   } catch (error) {
     setActionStatus("#profileStatus", error.message);
     toast(error.message);
+  } finally {
+    if (submit?.isConnected) submit.disabled = false;
   }
 });
 
@@ -1608,6 +1666,8 @@ $("#loginForm").addEventListener("submit", async (event) => {
     state.view = "home";
     await refreshBootstrap();
     renderShell();
+    await refreshNotifications();
+    startNotificationPolling();
     toast("Logged in.");
   } catch (error) {
     toast(error.message);
@@ -1633,6 +1693,8 @@ $("#registerForm").addEventListener("submit", async (event) => {
     state.view = "home";
     await refreshBootstrap();
     renderShell();
+    await refreshNotifications();
+    startNotificationPolling();
     showRegisterForm(false);
     toast("Account created.");
     if (enableSubAlerts) await enablePushAlerts();
@@ -1656,6 +1718,8 @@ $("#passwordSetupForm").addEventListener("submit", async (event) => {
     state.view = "home";
     await refreshBootstrap();
     renderShell();
+    await refreshNotifications();
+    startNotificationPolling();
   } catch (error) {
     toast(error.message);
   }

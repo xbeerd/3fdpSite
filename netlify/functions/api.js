@@ -446,6 +446,76 @@ function scoreTeamPins(lines = []) {
   return [1, 2, 3].map((game) => lines.reduce((sum, line) => sum + (Number(line[`game${game}`]) || 0), 0));
 }
 
+function normalizeNameForMatch(value) {
+  return String(value || "").toLowerCase().replace(/[^a-z0-9]/g, "");
+}
+
+function levenshteinDistance(a, b) {
+  const left = normalizeNameForMatch(a);
+  const right = normalizeNameForMatch(b);
+  if (!left || !right) return Math.max(left.length, right.length);
+  const previous = Array.from({ length: right.length + 1 }, (_, index) => index);
+  for (let i = 1; i <= left.length; i += 1) {
+    let lastDiagonal = previous[0];
+    previous[0] = i;
+    for (let j = 1; j <= right.length; j += 1) {
+      const above = previous[j];
+      const cost = left[i - 1] === right[j - 1] ? 0 : 1;
+      previous[j] = Math.min(
+        previous[j] + 1,
+        previous[j - 1] + 1,
+        lastDiagonal + cost
+      );
+      lastDiagonal = above;
+    }
+  }
+  return previous[right.length];
+}
+
+function nameSimilarity(a, b) {
+  const left = normalizeNameForMatch(a);
+  const right = normalizeNameForMatch(b);
+  const maxLength = Math.max(left.length, right.length);
+  if (!maxLength) return 0;
+  return 1 - (levenshteinDistance(left, right) / maxLength);
+}
+
+function knownTeamBowlerNames(data) {
+  const names = new Map();
+  const add = (name) => {
+    const cleaned = String(name || "").trim();
+    const key = normalizeNameForMatch(cleaned);
+    if (cleaned && key && !names.has(key)) names.set(key, cleaned);
+  };
+  for (const user of data?.users || []) {
+    add(user.recapName);
+    add(user.username);
+  }
+  for (const recap of data?.scoreRecaps || []) {
+    for (const line of recap.ourTeamLines || []) add(line.bowlerName);
+  }
+  return [...names.values()];
+}
+
+function correctTeamBowlerNames(lines = [], data) {
+  const knownNames = knownTeamBowlerNames(data);
+  if (!knownNames.length) return { lines, corrections: [] };
+  const corrections = [];
+  const correctedLines = lines.map((line) => {
+    const scannedName = String(line.bowlerName || "").trim();
+    if (!scannedName) return line;
+    const scannedKey = normalizeNameForMatch(scannedName);
+    if (knownNames.some((name) => normalizeNameForMatch(name) === scannedKey)) return line;
+    const best = knownNames
+      .map((name) => ({ name, score: nameSimilarity(scannedName, name) }))
+      .sort((a, b) => b.score - a.score)[0];
+    if (!best || best.score < 0.9) return line;
+    corrections.push(`${scannedName} -> ${best.name}`);
+    return { ...line, bowlerName: best.name };
+  });
+  return { lines: correctedLines, corrections };
+}
+
 function deriveHandicapFromTotals(pins, handicap, totals) {
   return handicap.map((value, index) => {
     if (value) return value;
@@ -484,7 +554,8 @@ function normalizeScoreLine(line = {}) {
 function normalizeScoreRecap(body, existing = {}, options = {}) {
   const date = String(body.date || "").trim();
   if (!ymdToDateParts(date)) throw Object.assign(new Error("Enter a valid recap date."), { statusCode: 400 });
-  const ourTeamLines = (Array.isArray(body.ourTeamLines) ? body.ourTeamLines : []).map(normalizeScoreLine).filter(Boolean);
+  const rawOurTeamLines = (Array.isArray(body.ourTeamLines) ? body.ourTeamLines : []).map(normalizeScoreLine).filter(Boolean);
+  const ourTeamLines = correctTeamBowlerNames(rawOurTeamLines, options.data).lines;
   const opponentLines = (Array.isArray(body.opponentLines) ? body.opponentLines : []).map(normalizeScoreLine).filter(Boolean);
   if (!ourTeamLines.length) throw Object.assign(new Error("Add at least one 3FDP bowler score row."), { statusCode: 400 });
   const calendarEvent = options.data?.calendarEvents?.find((eventItem) => eventItem.date === date);
@@ -649,7 +720,7 @@ function normalizeScannedLine(line = {}) {
   return normalized;
 }
 
-async function scanScorePhoto(photoDataUrl) {
+async function scanScorePhoto(photoDataUrl, data) {
   if (!scoreScanConfigured()) {
     throw Object.assign(new Error("Score photo scanning is not configured yet. Add OPENAI_API_KEY in Netlify to enable it."), { statusCode: 503 });
   }
@@ -693,6 +764,10 @@ async function scanScorePhoto(photoDataUrl) {
   } catch {
     throw Object.assign(new Error("The scan did not return readable score data. Try a clearer photo."), { statusCode: 502 });
   }
+  const rawOurTeamLines = (Array.isArray(parsed.ourTeamLines) ? parsed.ourTeamLines : []).map(normalizeScannedLine).filter(Boolean);
+  const correctedOurTeamLines = correctTeamBowlerNames(rawOurTeamLines, data);
+  const warnings = Array.isArray(parsed.warnings) ? parsed.warnings.map((warning) => String(warning)).filter(Boolean) : [];
+  warnings.push(...correctedOurTeamLines.corrections.map((correction) => `Corrected bowler name: ${correction}.`));
   return {
     ourTeamName: String(parsed.ourTeamName || "").trim(),
     opponentTeamName: String(parsed.opponentTeamName || "").trim(),
@@ -700,9 +775,9 @@ async function scanScorePhoto(photoDataUrl) {
     opponentHandicap: normalizeHandicapTotals(parsed.opponentHandicap),
     ourTotals: normalizeGameTotals(parsed.ourTotals),
     opponentTotals: normalizeGameTotals(parsed.opponentTotals),
-    ourTeamLines: (Array.isArray(parsed.ourTeamLines) ? parsed.ourTeamLines : []).map(normalizeScannedLine).filter(Boolean),
+    ourTeamLines: correctedOurTeamLines.lines,
     opponentLines: (Array.isArray(parsed.opponentLines) ? parsed.opponentLines : []).map(normalizeScannedLine).filter(Boolean),
-    warnings: Array.isArray(parsed.warnings) ? parsed.warnings.map((warning) => String(warning)).filter(Boolean).slice(0, 5) : []
+    warnings: warnings.slice(0, 5)
   };
 }
 
@@ -725,7 +800,8 @@ function publicPushSubscription(subscription) {
 function normalizePushPreferences(value = {}) {
   return {
     subAlerts: normalizeBoolean(value.subAlerts, true),
-    blogAlerts: normalizeBoolean(value.blogAlerts, true)
+    blogAlerts: normalizeBoolean(value.blogAlerts, true),
+    chatAlerts: normalizeBoolean(value.chatAlerts, true)
   };
 }
 
@@ -783,6 +859,32 @@ async function sendBlogNotification(data, actorUserId, payload) {
   }
 }
 
+async function sendChatNotification(data, actorUserId, message) {
+  if (!pushConfigured() || !data.pushSubscriptions.length) return;
+  const subscriptions = data.pushSubscriptions.filter((saved) => saved.userId !== actorUserId && normalizePushPreferences(saved.preferences).chatAlerts);
+  if (!subscriptions.length) return;
+  const text = String(message.text || "");
+  const notification = JSON.stringify({
+    title: `${message.username || "3FDP"} in team chat`,
+    body: text.length > 120 ? `${text.slice(0, 117)}...` : text,
+    url: "/#home",
+    tag: `chat-${message.id}`
+  });
+  const expired = new Set();
+  await Promise.all(subscriptions.map(async (saved) => {
+    try {
+      await webPush.sendNotification(saved.subscription, notification);
+    } catch (error) {
+      if (error.statusCode === 404 || error.statusCode === 410) expired.add(saved.id);
+      else console.error("Chat push notification failed:", error.message || error);
+    }
+  }));
+  if (expired.size) {
+    data.pushSubscriptions = data.pushSubscriptions.filter((subscription) => !expired.has(subscription.id));
+    await saveData(data);
+  }
+}
+
 exports.handler = async (event) => {
   connectNetlifyBlobs(event);
   const data = await loadData();
@@ -827,7 +929,7 @@ exports.handler = async (event) => {
       return json(200, { user: publicUser(user) });
     }
 
-    if (method === "PUT" && route === "/profile") {
+    if ((method === "PUT" || method === "POST") && route === "/profile") {
       const user = requireUser(event, data);
       const body = parseBody(event);
       const recapName = String(body.recapName || "").trim();
@@ -1070,6 +1172,7 @@ exports.handler = async (event) => {
       const message = { id: crypto.randomUUID(), userId: user.id, username: user.username, text, createdAt: new Date().toISOString() };
       data.chatMessages = [...(data.chatMessages || []), message].slice(-200);
       await saveData(data);
+      await sendChatNotification(data, user.id, message);
       return json(201, { messages: sortedChatMessages(data), message });
     }
 
@@ -1300,7 +1403,7 @@ exports.handler = async (event) => {
 
     if (method === "POST" && route === "/scores/scan") {
       requireUser(event, data);
-      const scan = await scanScorePhoto(parseBody(event).photoDataUrl);
+      const scan = await scanScorePhoto(parseBody(event).photoDataUrl, data);
       return json(200, scan);
     }
 

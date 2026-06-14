@@ -22,7 +22,11 @@
       <div class="app-title">
         <h1>3 Finger Death Punch</h1>
       </div>
-      <button id="menuBtn" class="icon-button" type="button" aria-label="Open menu">Menu</button>
+      <button id="menuBtn" class="icon-button menu-button" type="button" aria-label="Open menu" title="Open menu">
+        <span></span>
+        <span></span>
+        <span></span>
+      </button>
     </header>
 
     <section id="notificationPanel" class="notification-panel hidden">
@@ -106,6 +110,7 @@
                 <div class="notification-options">
                   <label class="check-row"><input id="pushSubAlerts" type="checkbox"> Sub requests</label>
                   <label class="check-row"><input id="pushBlogAlerts" type="checkbox"> Blog posts and replies</label>
+                  <label class="check-row"><input id="pushChatAlerts" type="checkbox"> Chat messages</label>
                 </div>
               </div>
               <div id="pushControls" class="row-actions hidden">
@@ -284,18 +289,12 @@
           </div>
           </div>
           <div id="recapLogPanel" class="score-view-panel hidden">
-            <div class="section-heading">
-              <div>
-                <p class="eyebrow">Recap Log</p>
-                <h2>Matches</h2>
-              </div>
+            <div class="section-heading score-filter-heading">
               <label>Week <select id="scoreWeekFilter"></select></label>
             </div>
             <div id="scoreRecaps" class="score-recaps"></div>
           </div>
           <div id="prizeMoneyPanel" class="score-view-panel hidden">
-            <p class="eyebrow">Prize Money</p>
-            <h2>Prize money distribution</h2>
             <form id="prizePotForm" class="form inline-form">
               <label>Prize pot <input name="prizePot" type="number" min="0" step="0.01" placeholder="0.00"></label>
               <button type="submit">Calculate</button>

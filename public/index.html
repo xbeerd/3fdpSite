@@ -12,12 +12,26 @@
   </head>
   <body>
     <header class="app-header">
-      <button id="refreshApp" class="icon-button refresh-button" type="button" aria-label="Refresh current page" title="Refresh current page">&#8635;</button>
-      <div>
+      <div class="header-actions">
+        <button id="refreshApp" class="icon-button refresh-button" type="button" aria-label="Refresh current page" title="Refresh current page">&#8635;</button>
+        <button id="notificationsToggle" class="icon-button notification-button user-only hidden" type="button" aria-label="View updates" title="View updates">
+          &#128276;
+          <span id="notificationBadge" class="notification-badge hidden"></span>
+        </button>
+      </div>
+      <div class="app-title">
         <h1>3 Finger Death Punch</h1>
       </div>
       <button id="menuBtn" class="icon-button" type="button" aria-label="Open menu">Menu</button>
     </header>
+
+    <section id="notificationPanel" class="notification-panel hidden">
+      <div class="notification-heading">
+        <strong>Updates</strong>
+        <button id="notificationsClose" class="ghost small" type="button">Close</button>
+      </div>
+      <div id="notificationList" class="notification-list"></div>
+    </section>
 
     <nav id="menu" class="menu hidden">
       <button data-view="home" type="button">Blog</button>
@@ -88,7 +102,11 @@
             <div class="settings-row">
               <div>
                 <strong>Push Notifications</strong>
-                <p class="muted">Get alerts for blog updates, replies, sub requests, and other team activity.</p>
+                <p class="muted">Choose which team alerts this device should receive.</p>
+                <div class="notification-options">
+                  <label class="check-row"><input id="pushSubAlerts" type="checkbox"> Sub requests</label>
+                  <label class="check-row"><input id="pushBlogAlerts" type="checkbox"> Blog posts and replies</label>
+                </div>
               </div>
               <div id="pushControls" class="row-actions hidden">
                 <button id="enablePush" type="button" class="ghost small">Enable Push Notifications</button>
@@ -258,7 +276,7 @@
             </div>
           </div>
           <div id="bowlerLogPanel" class="score-view-panel">
-          <div class="table-wrap">
+          <div class="table-wrap score-table-wrap">
             <table>
               <thead><tr><th>Bowler</th><th>Games</th><th>High Game</th><th>High Series</th><th>Average</th><th>HDCP</th></tr></thead>
               <tbody id="bowlerStats"></tbody>
@@ -282,7 +300,7 @@
               <label>Prize pot <input name="prizePot" type="number" min="0" step="0.01" placeholder="0.00"></label>
               <button type="submit">Calculate</button>
             </form>
-            <div class="table-wrap">
+            <div class="table-wrap score-table-wrap">
               <table>
                 <thead><tr><th>Bowler</th><th>Games Bowled</th><th>Paid Games</th><th>Unpaid Sub Games</th><th>Paid %</th><th>Payout</th></tr></thead>
                 <tbody id="prizeRows"></tbody>
@@ -296,7 +314,7 @@
         <section class="panel">
           <p class="eyebrow">Admin</p>
           <h2>Site setup</h2>
-          <form id="configForm" class="form inline-form">
+          <form id="configForm" class="form admin-config-form">
             <label>Bowling start <input name="bowlingStartTime" type="time"></label>
             <label>Practice start <input name="practiceStartTime" type="time"></label>
             <label>Contest start <input name="contestStartDate" type="date"></label>
@@ -332,9 +350,9 @@
             <button type="submit">Create user</button>
           </form>
           <p id="userAdminStatus" class="action-status hidden"></p>
-          <div class="table-wrap">
-            <table>
-              <thead><tr><th>User</th><th>Email / Recap Name</th><th>Role</th><th>Entries</th><th>Actions</th></tr></thead>
+          <div class="table-wrap admin-user-wrap">
+            <table class="admin-user-table">
+              <thead><tr><th>Account</th><th>Details</th></tr></thead>
               <tbody id="adminUsers"></tbody>
             </table>
           </div>
@@ -363,6 +381,20 @@
       </section>
     </main>
 
+    <section id="teamChat" class="team-chat user-only hidden">
+      <button id="chatToggle" class="chat-toggle" type="button" aria-expanded="false" aria-controls="chatPanel">Chat</button>
+      <div id="chatPanel" class="chat-panel hidden">
+        <div class="chat-header">
+          <strong>Team chat</strong>
+          <button id="chatClose" class="ghost small" type="button">Close</button>
+        </div>
+        <div id="chatMessages" class="chat-messages"></div>
+        <form id="chatForm" class="chat-form">
+          <input name="text" type="text" maxlength="500" autocomplete="off" placeholder="Message the team..." aria-label="Message">
+          <button type="submit">Send</button>
+        </form>
+      </div>
+    </section>
     <div id="toast" class="toast hidden"></div>
     <script src="/app.js"></script>
   </body>

@@ -30,6 +30,7 @@ const defaultData = {
   },
   users: [],
   notes: [],
+  chatMessages: [],
   calendarEvents: [],
   subRequests: [],
   pushSubscriptions: [],
@@ -81,6 +82,7 @@ async function loadData() {
     config: { ...defaultData.config, ...((stored || {}).config || {}) },
     users: (stored || {}).users || [],
     notes: (stored || {}).notes || [],
+    chatMessages: (stored || {}).chatMessages || [],
     calendarEvents: (stored || {}).calendarEvents || [],
     subRequests: (stored || {}).subRequests || [],
     pushSubscriptions: (stored || {}).pushSubscriptions || [],
@@ -334,6 +336,12 @@ function sortedNotes(data) {
 
 function findNote(data, noteId) {
   return data.notes.find((note) => note.id === noteId);
+}
+
+function sortedChatMessages(data) {
+  return [...(data.chatMessages || [])]
+    .sort((a, b) => String(a.createdAt).localeCompare(String(b.createdAt)))
+    .slice(-60);
 }
 
 function visibleSubRequests(data) {
@@ -707,8 +715,17 @@ function publicPushSubscription(subscription) {
     id: subscription.id,
     userId: subscription.userId,
     username: subscription.username,
+    endpoint: subscription.subscription?.endpoint || "",
+    preferences: normalizePushPreferences(subscription.preferences),
     createdAt: subscription.createdAt,
     updatedAt: subscription.updatedAt
+  };
+}
+
+function normalizePushPreferences(value = {}) {
+  return {
+    subAlerts: normalizeBoolean(value.subAlerts, true),
+    blogAlerts: normalizeBoolean(value.blogAlerts, true)
   };
 }
 
@@ -723,6 +740,8 @@ function normalizePushSubscription(value) {
 
 async function sendSubRequestNotifications(data, request, eventItem) {
   if (!pushConfigured() || !data.pushSubscriptions.length) return;
+  const subscriptions = data.pushSubscriptions.filter((saved) => normalizePushPreferences(saved.preferences).subAlerts);
+  if (!subscriptions.length) return;
   const payload = JSON.stringify({
     title: "3FDP sub needed",
     body: `${request.requestedBy} needs a sub${eventItem?.date ? ` on ${formatDisplayDate(eventItem.date)}` : ""}${eventItem?.opponent ? ` vs ${eventItem.opponent}` : ""}.`,
@@ -730,7 +749,7 @@ async function sendSubRequestNotifications(data, request, eventItem) {
     tag: `sub-request-${request.id}`
   });
   const expired = new Set();
-  await Promise.all(data.pushSubscriptions.map(async (saved) => {
+  await Promise.all(subscriptions.map(async (saved) => {
     try {
       await webPush.sendNotification(saved.subscription, payload);
     } catch (error) {
@@ -746,7 +765,7 @@ async function sendSubRequestNotifications(data, request, eventItem) {
 
 async function sendBlogNotification(data, actorUserId, payload) {
   if (!pushConfigured() || !data.pushSubscriptions.length) return;
-  const subscriptions = data.pushSubscriptions.filter((saved) => saved.userId !== actorUserId);
+  const subscriptions = data.pushSubscriptions.filter((saved) => saved.userId !== actorUserId && normalizePushPreferences(saved.preferences).blogAlerts);
   if (!subscriptions.length) return;
   const notification = JSON.stringify({ url: "/#home", ...payload });
   const expired = new Set();
@@ -849,16 +868,24 @@ exports.handler = async (event) => {
       return json(200, { publicKey: VAPID_PUBLIC_KEY, configured: pushConfigured() });
     }
 
+    if (method === "GET" && route === "/push/subscriptions") {
+      const user = requireUser(event, data);
+      return json(200, { subscriptions: data.pushSubscriptions.filter((item) => item.userId === user.id).map(publicPushSubscription) });
+    }
+
     if (method === "POST" && route === "/push/subscriptions") {
       const user = requireUser(event, data);
       if (!pushConfigured()) return json(503, { error: "Push notifications are not configured yet." });
-      const subscription = normalizePushSubscription(parseBody(event).subscription);
+      const body = parseBody(event);
+      const subscription = normalizePushSubscription(body.subscription);
+      const preferences = normalizePushPreferences(body.preferences);
       if (!subscription) return json(400, { error: "Push subscription is invalid." });
       const existing = data.pushSubscriptions.find((item) => item.subscription.endpoint === subscription.endpoint);
       if (existing) {
         existing.userId = user.id;
         existing.username = user.username;
         existing.subscription = subscription;
+        existing.preferences = preferences;
         existing.updatedAt = new Date().toISOString();
       } else {
         data.pushSubscriptions.push({
@@ -866,6 +893,7 @@ exports.handler = async (event) => {
           userId: user.id,
           username: user.username,
           subscription,
+          preferences,
           createdAt: new Date().toISOString()
         });
       }
@@ -1027,6 +1055,22 @@ exports.handler = async (event) => {
         tag: `blog-reply-${note.id}`
       });
       return json(201, { notes: sortedNotes(data), comment });
+    }
+
+    if (method === "GET" && route === "/chat/messages") {
+      requireUser(event, data);
+      return json(200, { messages: sortedChatMessages(data) });
+    }
+
+    if (method === "POST" && route === "/chat/messages") {
+      const user = requireUser(event, data);
+      const text = String(parseBody(event).text || "").trim();
+      if (!text) return json(400, { error: "Chat message cannot be blank." });
+      if (text.length > 500) return json(400, { error: "Chat message is too long." });
+      const message = { id: crypto.randomUUID(), userId: user.id, username: user.username, text, createdAt: new Date().toISOString() };
+      data.chatMessages = [...(data.chatMessages || []), message].slice(-200);
+      await saveData(data);
+      return json(201, { messages: sortedChatMessages(data), message });
     }
 
     if (method === "GET" && route === "/calendar/events") return json(200, { events: data.calendarEvents });

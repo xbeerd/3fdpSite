@@ -3,6 +3,10 @@ const state = {
   config: {},
   schedule: { entries: [], activeContest: false },
   notes: [],
+  chatMessages: [],
+  chatOpen: false,
+  notifications: [],
+  notificationOpen: false,
   events: [],
   subRequests: [],
   weights: [],
@@ -12,6 +16,7 @@ const state = {
   adminSetupOpen: false,
   pushConfigured: false,
   pushSubscribed: false,
+  pushPreferences: { subAlerts: true, blogAlerts: true },
   boardMode: "main",
   scoreMode: "bowlers",
   manualScoreEntryOpen: false,
@@ -143,6 +148,8 @@ function renderShell() {
   if (!state.user) setView("login");
   else if (needsSetup) setView("passwordSetup");
   else setView(state.view === "login" || state.view === "passwordSetup" ? "home" : state.view);
+  renderChat();
+  renderNotifications();
 }
 
 function showRegisterForm(show) {
@@ -154,6 +161,10 @@ function showRegisterForm(show) {
 async function logout() {
   await api("/api/logout", { method: "POST" });
   state.user = null;
+  state.chatMessages = [];
+  state.chatOpen = false;
+  state.notifications = [];
+  state.notificationOpen = false;
   state.pushConfigured = false;
   state.pushSubscribed = false;
   renderShell();
@@ -181,6 +192,80 @@ function formatDateTime(value) {
   const day = `${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}-${date.getFullYear()}`;
   const time = date.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
   return `${day} ${time}`;
+}
+
+const notificationSeenKeys = {
+  chat: "3fdpSeenChatAt",
+  calendar: "3fdpSeenCalendarAt",
+  sub: "3fdpSeenSubAt"
+};
+
+function maxTimestamp(values) {
+  return values.filter(Boolean).sort().at(-1) || "";
+}
+
+function notificationSeenAt(type) {
+  return localStorage.getItem(notificationSeenKeys[type]) || "";
+}
+
+function setNotificationSeenAt(type, value) {
+  if (value) localStorage.setItem(notificationSeenKeys[type], value);
+}
+
+function ensureNotificationBaselines() {
+  if (!localStorage.getItem(notificationSeenKeys.chat)) {
+    setNotificationSeenAt("chat", maxTimestamp(state.chatMessages.map((message) => message.createdAt)));
+  }
+  if (!localStorage.getItem(notificationSeenKeys.calendar)) {
+    setNotificationSeenAt("calendar", maxTimestamp(state.events.map((eventItem) => eventItem.createdAt)));
+  }
+  if (!localStorage.getItem(notificationSeenKeys.sub)) {
+    setNotificationSeenAt("sub", maxTimestamp(state.subRequests.map((request) => request.updatedAt || request.createdAt)));
+  }
+}
+
+function buildNotifications() {
+  const chatSeenAt = notificationSeenAt("chat");
+  const calendarSeenAt = notificationSeenAt("calendar");
+  const subSeenAt = notificationSeenAt("sub");
+  return [
+    ...state.chatMessages
+      .filter((message) => message.userId !== state.user?.id && String(message.createdAt || "") > chatSeenAt)
+      .map((message) => ({
+        id: `chat-${message.id}`,
+        type: "chat",
+        createdAt: message.createdAt,
+        title: `${message.username} in chat`,
+        text: message.text,
+        targetId: ""
+      })),
+    ...state.events
+      .filter((eventItem) => String(eventItem.createdAt || "") > calendarSeenAt)
+      .map((eventItem) => ({
+        id: `event-${eventItem.id}`,
+        type: "calendar",
+        createdAt: eventItem.createdAt,
+        title: "New calendar event",
+        text: `${eventItem.title || "Bowling"}${eventItem.date ? ` on ${formatDate(eventItem.date)}` : ""}`,
+        targetId: eventItem.id
+      })),
+    ...state.subRequests
+      .filter((request) => String(request.updatedAt || request.createdAt || "") > subSeenAt)
+      .map((request) => ({
+        id: `sub-${request.id}`,
+        type: "sub",
+        createdAt: request.updatedAt || request.createdAt,
+        title: "Sub request",
+        text: `${request.requestedBy || "Someone"} needs a sub${request.event?.date ? ` on ${formatDate(request.event.date)}` : ""}`,
+        targetId: request.eventId
+      }))
+  ].sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)));
+}
+
+function markNotificationsSeen() {
+  setNotificationSeenAt("chat", maxTimestamp(state.chatMessages.map((message) => message.createdAt)));
+  setNotificationSeenAt("calendar", maxTimestamp(state.events.map((eventItem) => eventItem.createdAt)));
+  setNotificationSeenAt("sub", maxTimestamp(state.subRequests.map((request) => request.updatedAt || request.createdAt)));
 }
 
 function todayYmd() {
@@ -308,6 +393,16 @@ async function refreshCalendarState(preferredEventId = "") {
   renderProfileOptions();
 }
 
+function wait(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function refreshCalendarAfterMutation(preferredEventId = "") {
+  await refreshCalendarState(preferredEventId);
+  await wait(350);
+  await refreshCalendarState(preferredEventId);
+}
+
 async function refreshWeightsAndBoard() {
   const weights = await api("/api/weights");
   state.weights = weights.weights;
@@ -346,6 +441,37 @@ async function refreshNotes() {
   const data = await api("/api/notes");
   state.notes = data.notes;
   renderHome();
+}
+
+async function refreshChatMessages() {
+  if (!state.user) return;
+  const data = await api("/api/chat/messages");
+  state.chatMessages = data.messages || [];
+  renderChat();
+}
+
+async function refreshNotifications({ open = false } = {}) {
+  if (!state.user) {
+    state.notifications = [];
+    renderNotifications();
+    return;
+  }
+  const [bootstrap, chat] = await Promise.all([
+    api("/api/bootstrap"),
+    api("/api/chat/messages").catch(() => ({ messages: state.chatMessages }))
+  ]);
+  state.events = bootstrap.events;
+  state.subRequests = bootstrap.subRequests;
+  state.notes = bootstrap.notes;
+  state.chatMessages = chat.messages || [];
+  ensureNotificationBaselines();
+  state.notifications = buildNotifications();
+  state.notificationOpen = open;
+  renderNotifications();
+  if (open) {
+    markNotificationsSeen();
+    renderNotificationBadge(0);
+  }
 }
 
 async function refreshCurrentView() {
@@ -404,6 +530,8 @@ function renderPushControls(message = "") {
   const visible = Boolean(state.user) && pushSupported();
   controls.classList.toggle("hidden", !visible);
   if (!visible) return;
+  $("#pushSubAlerts").checked = Boolean(state.pushPreferences.subAlerts);
+  $("#pushBlogAlerts").checked = Boolean(state.pushPreferences.blogAlerts);
   $("#enablePush").classList.toggle("hidden", state.pushSubscribed);
   $("#disablePush").classList.toggle("hidden", !state.pushSubscribed);
   $("#pushStatus").textContent = message || (state.pushSubscribed ? "Push notifications enabled." : "Push notifications off.");
@@ -420,6 +548,30 @@ async function pushRegistration() {
   return navigator.serviceWorker.register("/sw.js");
 }
 
+function readPushPreferences() {
+  return {
+    subAlerts: Boolean($("#pushSubAlerts")?.checked),
+    blogAlerts: Boolean($("#pushBlogAlerts")?.checked)
+  };
+}
+
+async function savePushPreferences(message = "Push notification options saved.") {
+  state.pushPreferences = readPushPreferences();
+  const registration = await pushRegistration();
+  const subscription = await registration?.pushManager.getSubscription();
+  if (!subscription) {
+    renderPushControls("Enable push notifications to use these options.");
+    return;
+  }
+  await api("/api/push/subscriptions", {
+    method: "POST",
+    body: JSON.stringify({ subscription, preferences: state.pushPreferences })
+  });
+  state.pushSubscribed = true;
+  renderPushControls(message);
+  toast(message);
+}
+
 async function refreshPushState() {
   if (!pushSupported() || !state.user) {
     renderPushControls();
@@ -431,6 +583,11 @@ async function refreshPushState() {
     const registration = await pushRegistration();
     const subscription = await registration.pushManager.getSubscription();
     state.pushSubscribed = Boolean(subscription);
+    if (subscription) {
+      const saved = await api("/api/push/subscriptions");
+      const match = (saved.subscriptions || []).find((item) => item.endpoint === subscription.endpoint) || saved.subscriptions?.[0];
+      state.pushPreferences = match?.preferences || state.pushPreferences;
+    }
     renderPushControls(state.pushConfigured ? "" : "Push notifications need server setup.");
   } catch {
     state.pushConfigured = false;
@@ -450,7 +607,8 @@ async function enablePushAlerts() {
     userVisibleOnly: true,
     applicationServerKey: urlBase64ToUint8Array(key.publicKey)
   });
-  await api("/api/push/subscriptions", { method: "POST", body: JSON.stringify({ subscription }) });
+  state.pushPreferences = readPushPreferences();
+  await api("/api/push/subscriptions", { method: "POST", body: JSON.stringify({ subscription, preferences: state.pushPreferences }) });
   state.pushSubscribed = true;
   renderPushControls("Push notifications enabled.");
   toast("Push notifications enabled.");
@@ -490,6 +648,49 @@ function renderHome() {
     ? state.notes.map(renderNote).join("")
     : `<p class="empty">No notes yet.</p>`;
   renderPushControls();
+}
+
+function renderChat() {
+  const chat = $("#teamChat");
+  if (!chat) return;
+  chat.classList.toggle("hidden", !state.user);
+  $("#chatPanel").classList.toggle("hidden", !state.chatOpen);
+  $("#chatToggle").setAttribute("aria-expanded", String(state.chatOpen));
+  $("#chatMessages").innerHTML = state.chatMessages.length
+    ? state.chatMessages.map((message) => `
+      <article class="chat-message ${message.userId === state.user?.id ? "is-mine" : ""}">
+        <div>
+          <strong>${escapeHtml(message.username)}</strong>
+          <span>${formatDateTime(message.createdAt)}</span>
+        </div>
+        <p>${escapeHtml(message.text)}</p>
+      </article>
+    `).join("")
+    : `<p class="empty">No chat messages yet.</p>`;
+  if (state.chatOpen) $("#chatMessages").scrollTop = $("#chatMessages").scrollHeight;
+}
+
+function renderNotificationBadge(count = state.notifications.length) {
+  const badge = $("#notificationBadge");
+  if (!badge) return;
+  badge.classList.toggle("hidden", !count);
+  badge.textContent = count > 9 ? "9+" : String(count);
+}
+
+function renderNotifications() {
+  const panel = $("#notificationPanel");
+  if (!panel) return;
+  panel.classList.toggle("hidden", !state.notificationOpen || !state.user);
+  renderNotificationBadge();
+  $("#notificationList").innerHTML = state.notifications.length
+    ? state.notifications.map((item) => `
+      <button class="notification-item" type="button" data-notification-type="${item.type}" data-notification-target="${escapeHtml(item.targetId)}">
+        <strong>${escapeHtml(item.title)}</strong>
+        <span>${escapeHtml(item.text)}</span>
+        <em>${formatDateTime(item.createdAt)}</em>
+      </button>
+    `).join("")
+    : `<p class="empty">No new updates.</p>`;
 }
 
 function renderNotePhotoPreview() {
@@ -1134,14 +1335,18 @@ function renderAdmin() {
   $("#configForm input[name='prizeMoneyPublic']").checked = Boolean(state.config.prizeMoneyPublic);
   $("#adminUsers").innerHTML = state.adminUsers.map((user) => `
     <tr>
-      <td>${escapeHtml(user.username)}</td>
-      <td>${escapeHtml(user.email)}${user.recapName ? `<span class="muted">Recap: ${escapeHtml(user.recapName)}</span>` : ""}</td>
-      <td>${escapeHtml(user.role)}</td>
-      <td>${user.weightsEntered.length}</td>
-      <td class="row-actions">
-        <button class="small ghost" type="button" data-edit-user="${user.id}">Edit</button>
-        <button class="small ghost" type="button" data-reset-user="${user.id}">Reset</button>
-        <button class="small danger" type="button" data-delete-user="${user.id}">Delete</button>
+      <td>
+        <strong>${escapeHtml(user.username)}</strong>
+        <span class="muted">${escapeHtml(user.role)}</span>
+      </td>
+      <td>
+        <span>${escapeHtml(user.email)}</span>
+        ${user.recapName ? `<span class="muted">Recap: ${escapeHtml(user.recapName)}</span>` : ""}
+        <div class="row-actions admin-user-actions">
+          <button class="small ghost" type="button" data-edit-user="${user.id}">Edit</button>
+          <button class="small ghost" type="button" data-reset-user="${user.id}">Reset</button>
+          <button class="small danger" type="button" data-delete-user="${user.id}">Delete</button>
+        </div>
       </td>
     </tr>
   `).join("");
@@ -1277,6 +1482,7 @@ async function init() {
   state.view = viewFromHash() || state.view;
   await refreshBootstrap();
   renderShell();
+  if (state.user) await refreshNotifications();
 }
 
 $("#menuBtn").addEventListener("click", () => $("#menu").classList.toggle("hidden"));
@@ -1302,6 +1508,55 @@ $("#menuAuthBtn").addEventListener("click", async () => {
   if (state.user) await logout();
   else setView("login");
 });
+$("#notificationsToggle").addEventListener("click", async () => {
+  state.notificationOpen = !state.notificationOpen;
+  if (state.notificationOpen) await refreshNotifications({ open: true }).catch((error) => toast(error.message));
+  else renderNotifications();
+});
+$("#notificationsClose").addEventListener("click", () => {
+  state.notificationOpen = false;
+  renderNotifications();
+});
+$("#notificationList").addEventListener("click", async (event) => {
+  const item = event.target.closest("[data-notification-type]");
+  if (!item) return;
+  state.notificationOpen = false;
+  renderNotifications();
+  if (item.dataset.notificationType === "chat") {
+    state.chatOpen = true;
+    renderChat();
+    await refreshChatMessages().catch((error) => toast(error.message));
+    return;
+  }
+  if (item.dataset.notificationTarget) showCalendarEvent(item.dataset.notificationTarget);
+});
+$("#chatToggle").addEventListener("click", async () => {
+  state.chatOpen = !state.chatOpen;
+  renderChat();
+  if (state.chatOpen) await refreshChatMessages().catch((error) => toast(error.message));
+});
+$("#chatClose").addEventListener("click", () => {
+  state.chatOpen = false;
+  renderChat();
+});
+$("#chatForm").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const form = event.currentTarget;
+  const submit = form.querySelector("button[type='submit']");
+  const text = String(new FormData(form).get("text") || "").trim();
+  if (!text) return;
+  if (submit) submit.disabled = true;
+  try {
+    const data = await api("/api/chat/messages", { method: "POST", body: JSON.stringify({ text }) });
+    state.chatMessages = data.messages || state.chatMessages;
+    form.reset();
+    renderChat();
+  } catch (error) {
+    toast(error.message);
+  } finally {
+    if (submit?.isConnected) submit.disabled = false;
+  }
+});
 window.addEventListener("hashchange", () => openViewFromHash().catch((error) => toast(error.message)));
 if ("serviceWorker" in navigator) {
   navigator.serviceWorker.addEventListener("message", (event) => {
@@ -1318,6 +1573,14 @@ $("#subSummary").addEventListener("click", async (event) => {
 });
 $("#enablePush").addEventListener("click", () => enablePushAlerts().catch((error) => toast(error.message)));
 $("#disablePush").addEventListener("click", () => disablePushAlerts().catch((error) => toast(error.message)));
+$("#pushSubAlerts").addEventListener("change", () => {
+  state.pushPreferences = readPushPreferences();
+  if (state.pushSubscribed) savePushPreferences().catch((error) => toast(error.message));
+});
+$("#pushBlogAlerts").addEventListener("change", () => {
+  state.pushPreferences = readPushPreferences();
+  if (state.pushSubscribed) savePushPreferences().catch((error) => toast(error.message));
+});
 $("#prevMonth").addEventListener("click", () => moveCalendarMonth(-1));
 $("#nextMonth").addEventListener("click", () => moveCalendarMonth(1));
 
@@ -1558,23 +1821,19 @@ $("#calendarList").addEventListener("click", async (event) => {
       previousSelection = state.selectedCalendarEventId;
       const data = await api(`/api/calendar/events/${deleteEventButton.dataset.deleteEvent}`, { method: "DELETE" });
       if (state.selectedCalendarEventId === eventId) state.selectedCalendarEventId = null;
-      await refreshCalendarState();
+      await refreshCalendarAfterMutation();
       toast(`${data.removedCount || 1} calendar event${data.removedCount === 1 ? "" : "s"} removed.`);
       return;
     }
     if (subButton) {
       const note = prompt("Anything people should know?");
-      const data = await api("/api/sub-requests", { method: "POST", body: JSON.stringify({ eventId: subButton.dataset.subRequest, note }) });
-      state.subRequests = data.subRequests;
-      renderHome();
-      renderCalendar();
+      await api("/api/sub-requests", { method: "POST", body: JSON.stringify({ eventId: subButton.dataset.subRequest, note }) });
+      await refreshCalendarAfterMutation(subButton.dataset.subRequest);
       return;
     }
     if (responseButton) {
-      const data = await api(`/api/sub-requests/${responseButton.dataset.subResponse}/respond`, { method: "POST", body: JSON.stringify({ response: responseButton.dataset.response }) });
-      state.subRequests = data.subRequests;
-      renderHome();
-      renderCalendar();
+      await api(`/api/sub-requests/${responseButton.dataset.subResponse}/respond`, { method: "POST", body: JSON.stringify({ response: responseButton.dataset.response }) });
+      await refreshCalendarAfterMutation(state.selectedCalendarEventId || "");
       return;
     }
     if (editSubButton) {
@@ -1582,17 +1841,15 @@ $("#calendarList").addEventListener("click", async (event) => {
       if (!request) return;
       const note = prompt("Edit sub request note:", request.note || "");
       if (note === null) return;
-      const data = await api(`/api/sub-requests/${editSubButton.dataset.editSubRequest}`, { method: "PUT", body: JSON.stringify({ note }) });
-      state.subRequests = data.subRequests;
-      renderHome();
-      renderCalendar();
+      await api(`/api/sub-requests/${editSubButton.dataset.editSubRequest}`, { method: "PUT", body: JSON.stringify({ note }) });
+      await refreshCalendarAfterMutation(request.eventId || state.selectedCalendarEventId || "");
       toast("Sub request updated.");
       return;
     }
     if (deleteSubButton && confirm("Cancel this sub request?")) {
       previousSubRequests = [...state.subRequests];
       const data = await api(`/api/sub-requests/${deleteSubButton.dataset.deleteSubRequest}`, { method: "DELETE" });
-      await refreshCalendarState(state.selectedCalendarEventId);
+      await refreshCalendarAfterMutation(state.selectedCalendarEventId);
       toast(`${data.removedCount || 1} sub request${data.removedCount === 1 ? "" : "s"} canceled.`);
     }
   } catch (error) {
@@ -1647,7 +1904,7 @@ $("#quickEventForm").addEventListener("submit", async (event) => {
     state.selectedCalendarEventId = savedEventId || state.selectedCalendarEventId;
     if (editingEventId) state.calendarCursor = String(payload.date || "").slice(0, 7) || state.calendarCursor;
     resetCalendarEventForm();
-    await refreshCalendarState(savedEventId);
+    await refreshCalendarAfterMutation(savedEventId);
     toast(editingEventId ? "Calendar event updated." : (data.skippedDuplicateCount ? "Duplicate event skipped." : "Calendar event added."));
   } catch (error) {
     toast(error.message);
@@ -1986,7 +2243,7 @@ $("#csvForm").addEventListener("submit", async (event) => {
       : await api("/api/calendar/events", { method: "POST", body: JSON.stringify({ events }) });
     state.lastImportId = action === "upload" ? (data.importId || "") : "";
     updateUndoImportButton();
-    await refreshCalendarState(data.savedEventIds?.[0] || state.selectedCalendarEventId || "");
+    await refreshCalendarAfterMutation(data.savedEventIds?.[0] || state.selectedCalendarEventId || "");
     const message = action === "delete"
       ? `Schedule CSV delete complete: ${data.removedCount || 0} event${data.removedCount === 1 ? "" : "s"} removed${data.invalidCount ? `, ${data.invalidCount} invalid row${data.invalidCount === 1 ? "" : "s"} skipped` : ""}.`
       : importSummary(data);
@@ -2020,7 +2277,7 @@ $("#undoCsvImport").addEventListener("click", async () => {
     state.lastImportId = "";
     updateUndoImportButton();
     const data = await api(`/api/calendar/imports/${importId}`, { method: "DELETE" });
-    await refreshCalendarState(state.selectedCalendarEventId || "");
+    await refreshCalendarAfterMutation(state.selectedCalendarEventId || "");
     const message = `Last schedule upload undone: ${data.removedCount} event${data.removedCount === 1 ? "" : "s"} removed.`;
     setActionStatus("#csvStatus", message);
     toast(message);

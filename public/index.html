@@ -318,6 +318,7 @@
             <label>Practice start <input name="practiceStartTime" type="time"></label>
             <label>Contest start <input name="contestStartDate" type="date"></label>
             <label>Contest end <input name="contestEndDate" type="date"></label>
+            <label>Chat image expiry days <input name="chatImageRetentionDays" type="number" min="0" max="365" step="1"></label>
             <label class="check-row"><input name="prizeMoneyPublic" type="checkbox"> Show prize money to users</label>
             <button type="submit">Save setup</button>
           </form>
@@ -390,10 +391,19 @@
         <div id="chatMessages" class="chat-messages"></div>
         <form id="chatForm" class="chat-form">
           <input name="text" type="text" maxlength="500" autocomplete="off" placeholder="Message the team..." aria-label="Message">
+          <label class="chat-photo-button" title="Add photo">
+            <input name="photo" type="file" accept="image/*" aria-label="Add photo">
+            <span>+</span>
+          </label>
           <button type="submit">Send</button>
+          <div id="chatPhotoPreview" class="chat-photo-preview hidden"></div>
         </form>
       </div>
     </section>
+    <dialog id="chatImageDialog" class="image-dialog">
+      <button id="closeChatImageDialog" class="ghost small" type="button">Close</button>
+      <img id="chatImageFull" alt="Chat photo">
+    </dialog>
     <div id="toast" class="toast hidden"></div>
     <script src="/app.js"></script>
   </body>

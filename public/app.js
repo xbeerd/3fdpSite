@@ -28,6 +28,7 @@ const state = {
   editingScoreRecapId: "",
   scorePhotoDataUrl: "",
   notePhotoDataUrl: "",
+  chatPhotoDataUrl: "",
   editingCalendarEventId: "",
   scoreHandicapTotals: { our: [0, 0, 0], opponent: [0, 0, 0] },
   scoreGameTotals: { our: [0, 0, 0], opponent: [0, 0, 0] },
@@ -693,11 +694,33 @@ function renderChat() {
           <strong>${escapeHtml(message.username)}</strong>
           <span>${formatDateTime(message.createdAt)}</span>
         </div>
-        <p>${escapeHtml(message.text)}</p>
+        ${message.text ? `<p>${escapeHtml(message.text)}</p>` : ""}
+        ${message.imageDataUrl ? `<button class="chat-photo-thumb" type="button" data-chat-image="${escapeHtml(message.id)}"><img src="${message.imageDataUrl}" alt="Chat photo from ${escapeHtml(message.username)}"></button>` : ""}
+        ${message.imageExpiredAt ? `<p class="muted">Photo expired.</p>` : ""}
       </article>
     `).join("")
     : `<p class="empty">No chat messages yet.</p>`;
   if (state.chatOpen) $("#chatMessages").scrollTop = $("#chatMessages").scrollHeight;
+  renderChatPhotoPreview();
+}
+
+function renderChatPhotoPreview() {
+  const preview = $("#chatPhotoPreview");
+  if (!preview) return;
+  preview.classList.toggle("hidden", !state.chatPhotoDataUrl);
+  preview.innerHTML = state.chatPhotoDataUrl
+    ? `
+      <img src="${state.chatPhotoDataUrl}" alt="Chat photo preview">
+      <button class="small danger" type="button" data-clear-chat-photo>Remove</button>
+    `
+    : "";
+}
+
+function openChatImage(messageId) {
+  const message = state.chatMessages.find((item) => item.id === messageId);
+  if (!message?.imageDataUrl) return;
+  $("#chatImageFull").src = message.imageDataUrl;
+  $("#chatImageDialog").showModal();
 }
 
 function renderNotificationBadge(count = state.notifications.length) {
@@ -1161,6 +1184,33 @@ function resizeScorePhoto(file) {
   });
 }
 
+function resizeChatPhoto(file) {
+  return new Promise((resolve, reject) => {
+    if (!file.type.startsWith("image/")) return reject(new Error("Choose an image file."));
+    const reader = new FileReader();
+    reader.onerror = () => reject(new Error("Could not read that photo."));
+    reader.onload = () => {
+      const image = new Image();
+      image.onerror = () => reject(new Error("Could not load that photo."));
+      image.onload = () => {
+        const maxSide = 900;
+        const scale = Math.min(1, maxSide / Math.max(image.width, image.height));
+        const canvas = document.createElement("canvas");
+        canvas.width = Math.max(1, Math.round(image.width * scale));
+        canvas.height = Math.max(1, Math.round(image.height * scale));
+        const context = canvas.getContext("2d");
+        context.drawImage(image, 0, 0, canvas.width, canvas.height);
+        state.chatPhotoDataUrl = canvas.toDataURL("image/jpeg", 0.7);
+        renderChatPhotoPreview();
+        toast("Chat photo ready.");
+        resolve(state.chatPhotoDataUrl);
+      };
+      image.src = reader.result;
+    };
+    reader.readAsDataURL(file);
+  });
+}
+
 function blankScoreLine(isSub = false) {
   return { bowlerName: "", game1: "", game2: "", game3: "", isSub, paid: !isSub };
 }
@@ -1420,6 +1470,7 @@ function renderAdmin() {
   $("#configForm input[name='practiceStartTime']").value = state.config.practiceStartTime || "";
   $("#configForm input[name='contestStartDate']").value = state.config.contestStartDate || "";
   $("#configForm input[name='contestEndDate']").value = state.config.contestEndDate || "";
+  $("#configForm input[name='chatImageRetentionDays']").value = state.config.chatImageRetentionDays ?? 30;
   $("#configForm input[name='prizeMoneyPublic']").checked = Boolean(state.config.prizeMoneyPublic);
   $("#adminUsers").innerHTML = state.adminUsers.map((user) => `
     <tr>
@@ -1640,11 +1691,12 @@ $("#chatForm").addEventListener("submit", async (event) => {
   const form = event.currentTarget;
   const submit = form.querySelector("button[type='submit']");
   const text = String(new FormData(form).get("text") || "").trim();
-  if (!text) return;
+  if (!text && !state.chatPhotoDataUrl) return;
   if (submit) submit.disabled = true;
   try {
-    const data = await api("/api/chat/messages", { method: "POST", body: JSON.stringify({ text }) });
+    const data = await api("/api/chat/messages", { method: "POST", body: JSON.stringify({ text, imageDataUrl: state.chatPhotoDataUrl }) });
     state.chatMessages = data.messages || state.chatMessages;
+    state.chatPhotoDataUrl = "";
     form.reset();
     renderChat();
   } catch (error) {
@@ -1653,6 +1705,37 @@ $("#chatForm").addEventListener("submit", async (event) => {
     if (submit?.isConnected) submit.disabled = false;
   }
 });
+
+$("#chatForm").addEventListener("change", (event) => {
+  const input = event.target.closest("[name='photo']");
+  if (!input) return;
+  const file = input.files[0];
+  if (!file) return;
+  resizeChatPhoto(file).catch((error) => toast(error.message));
+});
+
+$("#chatForm").addEventListener("paste", (event) => {
+  const file = [...(event.clipboardData?.files || [])].find((item) => item.type.startsWith("image/"));
+  if (!file) return;
+  event.preventDefault();
+  resizeChatPhoto(file).catch((error) => toast(error.message));
+});
+
+$("#chatForm").addEventListener("click", (event) => {
+  if (!event.target.closest("[data-clear-chat-photo]")) return;
+  state.chatPhotoDataUrl = "";
+  const input = $("#chatForm input[name='photo']");
+  if (input) input.value = "";
+  renderChatPhotoPreview();
+});
+
+$("#chatMessages").addEventListener("click", (event) => {
+  const imageButton = event.target.closest("[data-chat-image]");
+  if (!imageButton) return;
+  openChatImage(imageButton.dataset.chatImage);
+});
+
+$("#closeChatImageDialog").addEventListener("click", () => $("#chatImageDialog").close());
 window.addEventListener("hashchange", () => openViewFromHash().catch((error) => toast(error.message)));
 window.addEventListener("focus", () => {
   if (state.user) refreshNotifications().catch(() => {});
@@ -2389,6 +2472,7 @@ $("#configForm").addEventListener("submit", async (event) => {
   try {
     const payload = Object.fromEntries(new FormData(form));
     payload.prizeMoneyPublic = form.elements.prizeMoneyPublic.checked;
+    payload.chatImageRetentionDays = Number(form.elements.chatImageRetentionDays.value || 0);
     const data = await api("/api/admin/config", { method: "PUT", body: JSON.stringify(payload) });
     state.config = data.config;
     state.schedule = data.schedule;

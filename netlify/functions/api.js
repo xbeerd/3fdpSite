@@ -26,7 +26,8 @@ const defaultData = {
     contestEndDate: "",
     weighInHour: 18,
     timeZone: TIME_ZONE,
-    prizeMoneyPublic: false
+    prizeMoneyPublic: false,
+    chatImageRetentionDays: 30
   },
   users: [],
   notes: [],
@@ -368,6 +369,7 @@ function addSubConfirmationNote(data, user, request) {
 }
 
 function sortedChatMessages(data) {
+  pruneExpiredChatImages(data);
   return [...(data.chatMessages || [])]
     .sort((a, b) => String(a.createdAt).localeCompare(String(b.createdAt)))
     .slice(-60);
@@ -433,6 +435,34 @@ function normalizeScorePhoto(value) {
     throw Object.assign(new Error("Recap photo is too large. Try a smaller image."), { statusCode: 400 });
   }
   return text;
+}
+
+function normalizeChatImage(value) {
+  const text = normalizeScorePhoto(value);
+  if (!text) return "";
+  if (text.length > 900_000) {
+    throw Object.assign(new Error("Chat photo is too large. Try a smaller image."), { statusCode: 400 });
+  }
+  return text;
+}
+
+function chatImageRetentionDays(data) {
+  const value = Number(data.config?.chatImageRetentionDays);
+  return Number.isFinite(value) && value >= 0 ? Math.min(365, Math.round(value)) : 30;
+}
+
+function pruneExpiredChatImages(data) {
+  const days = chatImageRetentionDays(data);
+  const cutoff = Date.now() - (days * 24 * 60 * 60 * 1000);
+  let changed = false;
+  data.chatMessages = (data.chatMessages || []).map((message) => {
+    if (!message.imageDataUrl) return message;
+    const createdAt = Date.parse(message.createdAt || "");
+    if (Number.isNaN(createdAt) || createdAt >= cutoff) return message;
+    changed = true;
+    return { ...message, imageDataUrl: "", imageExpiredAt: new Date().toISOString() };
+  });
+  return changed;
 }
 
 function scoreScanConfigured() {
@@ -1061,7 +1091,8 @@ exports.handler = async (event) => {
       data.config = {
         ...data.config,
         ...body,
-        prizeMoneyPublic: normalizeBoolean(body.prizeMoneyPublic, false)
+        prizeMoneyPublic: normalizeBoolean(body.prizeMoneyPublic, false),
+        chatImageRetentionDays: Math.max(0, Math.min(365, Math.round(Number(body.chatImageRetentionDays) || 0)))
       };
       await saveData(data);
       return json(200, { config: data.config, schedule: buildSchedule(data) });
@@ -1236,15 +1267,19 @@ exports.handler = async (event) => {
 
     if (method === "GET" && route === "/chat/messages") {
       requireUser(event, data);
+      if (pruneExpiredChatImages(data)) await saveData(data);
       return json(200, { messages: sortedChatMessages(data) });
     }
 
     if (method === "POST" && route === "/chat/messages") {
       const user = requireUser(event, data);
-      const text = String(parseBody(event).text || "").trim();
-      if (!text) return json(400, { error: "Chat message cannot be blank." });
+      const body = parseBody(event);
+      const text = String(body.text || "").trim();
+      const imageDataUrl = normalizeChatImage(body.imageDataUrl);
+      if (!text && !imageDataUrl) return json(400, { error: "Chat message cannot be blank." });
       if (text.length > 500) return json(400, { error: "Chat message is too long." });
-      const message = { id: crypto.randomUUID(), userId: user.id, username: user.username, text, createdAt: new Date().toISOString() };
+      pruneExpiredChatImages(data);
+      const message = { id: crypto.randomUUID(), userId: user.id, username: user.username, text, imageDataUrl, createdAt: new Date().toISOString() };
       data.chatMessages = [...(data.chatMessages || []), message].slice(-200);
       await saveData(data);
       await sendChatNotification(data, user.id, message);

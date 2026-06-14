@@ -460,6 +460,24 @@ textarea:-webkit-autofill {
   gap: 0.55rem;
 }
 
+.inline-edit-form {
+  display: grid;
+  gap: 0.55rem;
+  margin: 0.7rem 0;
+  padding: 0.7rem;
+  background: #f7f7f7;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+
+.inline-edit-form textarea {
+  min-height: 9rem;
+}
+
+.comment-item .inline-edit-form textarea {
+  min-height: 6rem;
+}
+
 .note-photo-preview {
   display: grid;
   gap: 0.55rem;

@@ -338,6 +338,35 @@ function findNote(data, noteId) {
   return data.notes.find((note) => note.id === noteId);
 }
 
+function canManageOwnedItem(user, item) {
+  return Boolean(user && item && (user.role === "admin" || item.userId === user.id));
+}
+
+function findNoteComment(note, commentId) {
+  return (note?.comments || []).find((comment) => comment.id === commentId);
+}
+
+function addSubConfirmationNote(data, user, request) {
+  const eventItem = data.calendarEvents.find((event) => event.id === request.eventId) || null;
+  const dedupeKey = `sub-confirm-${request.id}-${user.id}`;
+  if (data.notes.some((note) => note.systemKey === dedupeKey)) return null;
+  const context = [
+    eventItem?.date ? formatDisplayDate(eventItem.date) : "",
+    eventItem?.opponent ? `vs ${eventItem.opponent}` : ""
+  ].filter(Boolean).join(" ");
+  const note = {
+    id: crypto.randomUUID(),
+    userId: user.id,
+    username: user.username,
+    text: `${user.username} can sub for ${request.requestedBy}${context ? ` on ${context}` : ""}.`,
+    comments: [],
+    systemKey: dedupeKey,
+    createdAt: new Date().toISOString()
+  };
+  data.notes.push(note);
+  return note;
+}
+
 function sortedChatMessages(data) {
   return [...(data.chatMessages || [])]
     .sort((a, b) => String(a.createdAt).localeCompare(String(b.createdAt)))
@@ -950,8 +979,23 @@ exports.handler = async (event) => {
       if (isFirstUser && process.env.ADMIN_SETUP_CODE && setupCode !== process.env.ADMIN_SETUP_CODE) return json(403, { error: "Admin setup code is required." });
       if (data.users.some((user) => user.email === email || user.username.toLowerCase() === username.toLowerCase())) return json(409, { error: "That email or username is already registered." });
       const { salt, hash } = hashPassword(password);
-      data.users.push({ id: crypto.randomUUID(), email, username, passwordSalt: salt, passwordHash: hash, role: isFirstUser ? "admin" : "user", createdAt: new Date().toISOString() });
+      const newUser = { id: crypto.randomUUID(), email, username, passwordSalt: salt, passwordHash: hash, role: isFirstUser ? "admin" : "user", createdAt: new Date().toISOString() };
+      data.users.push(newUser);
+      data.notes.push({
+        id: crypto.randomUUID(),
+        userId: newUser.id,
+        username: newUser.username,
+        text: `${newUser.username} joined the team site.`,
+        comments: [],
+        systemKey: `user-joined-${newUser.id}`,
+        createdAt: new Date().toISOString()
+      });
       await saveData(data);
+      await sendBlogNotification(data, newUser.id, {
+        title: "3FDP new user",
+        body: `${newUser.username} joined the team site.`,
+        tag: `user-joined-${newUser.id}`
+      });
       return json(201, { ok: true });
     }
 
@@ -1120,10 +1164,11 @@ exports.handler = async (event) => {
     }
 
     if (method === "PUT" && /^\/notes\/[^/]+$/.test(route)) {
-      requireAdmin(event, data);
+      const user = requireUser(event, data);
       const note = findNote(data, decodeURIComponent(route.split("/")[2]));
       const text = String(parseBody(event).text || "").trim();
       if (!note) return json(404, { error: "Blog entry not found." });
+      if (!canManageOwnedItem(user, note)) return json(403, { error: "You can only edit your own blog entries." });
       if (!text) return json(400, { error: "Blog entry cannot be blank." });
       note.text = text;
       note.updatedAt = new Date().toISOString();
@@ -1132,8 +1177,11 @@ exports.handler = async (event) => {
     }
 
     if (method === "DELETE" && /^\/notes\/[^/]+$/.test(route)) {
-      requireAdmin(event, data);
+      const user = requireUser(event, data);
       const noteId = decodeURIComponent(route.split("/")[2]);
+      const note = findNote(data, noteId);
+      if (!note) return json(404, { error: "Blog entry not found." });
+      if (!canManageOwnedItem(user, note)) return json(403, { error: "You can only delete your own blog entries." });
       const beforeCount = data.notes.length;
       data.notes = data.notes.filter((note) => note.id !== noteId);
       if (data.notes.length === beforeCount) return json(404, { error: "Blog entry not found." });
@@ -1157,6 +1205,33 @@ exports.handler = async (event) => {
         tag: `blog-reply-${note.id}`
       });
       return json(201, { notes: sortedNotes(data), comment });
+    }
+
+    if (method === "PUT" && /^\/notes\/[^/]+\/comments\/[^/]+$/.test(route)) {
+      const user = requireUser(event, data);
+      const [, , noteId, , commentId] = route.split("/");
+      const note = findNote(data, decodeURIComponent(noteId));
+      const comment = findNoteComment(note, decodeURIComponent(commentId));
+      const text = String(parseBody(event).text || "").trim();
+      if (!note || !comment) return json(404, { error: "Reply not found." });
+      if (!canManageOwnedItem(user, comment)) return json(403, { error: "You can only edit your own replies." });
+      if (!text) return json(400, { error: "Reply cannot be blank." });
+      comment.text = text;
+      comment.updatedAt = new Date().toISOString();
+      await saveData(data);
+      return json(200, { notes: sortedNotes(data), comment });
+    }
+
+    if (method === "DELETE" && /^\/notes\/[^/]+\/comments\/[^/]+$/.test(route)) {
+      const user = requireUser(event, data);
+      const [, , noteId, , commentId] = route.split("/");
+      const note = findNote(data, decodeURIComponent(noteId));
+      const comment = findNoteComment(note, decodeURIComponent(commentId));
+      if (!note || !comment) return json(404, { error: "Reply not found." });
+      if (!canManageOwnedItem(user, comment)) return json(403, { error: "You can only delete your own replies." });
+      note.comments = (note.comments || []).filter((candidate) => candidate.id !== comment.id);
+      await saveData(data);
+      return json(200, { notes: sortedNotes(data) });
     }
 
     if (method === "GET" && route === "/chat/messages") {
@@ -1311,10 +1386,21 @@ exports.handler = async (event) => {
       const request = findSubRequest(data, decodeURIComponent(route.split("/")[2]));
       if (!request) return json(404, { error: "Sub request not found." });
       const response = String(parseBody(event).response || "");
+      const previousResponse = request.responses.find((item) => item.userId === user.id)?.response || "";
       request.responses = request.responses.filter((item) => item.userId !== user.id);
       request.responses.push({ userId: user.id, username: user.username, response, createdAt: new Date().toISOString() });
+      const subConfirmationNote = response === "can" && previousResponse !== "can"
+        ? addSubConfirmationNote(data, user, request)
+        : null;
       await saveData(data);
-      return json(200, { subRequests: visibleSubRequests(data) });
+      if (subConfirmationNote) {
+        await sendBlogNotification(data, user.id, {
+          title: "3FDP sub confirmed",
+          body: `${user.username} can sub for ${request.requestedBy}.`,
+          tag: `sub-confirm-${request.id}-${user.id}`
+        });
+      }
+      return json(200, { subRequests: visibleSubRequests(data), notes: sortedNotes(data) });
     }
 
     if (method === "PUT" && /^\/sub-requests\/[^/]+$/.test(route)) {

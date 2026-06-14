@@ -736,7 +736,8 @@ function renderNotePhotoPreview() {
 }
 
 function renderNote(note) {
-  const adminControls = state.user?.role === "admin"
+  const canManageNote = state.user?.role === "admin" || state.user?.id === note.userId;
+  const noteControls = canManageNote
     ? `
       <div class="row-actions note-actions">
         <button class="small ghost" type="button" data-edit-note="${note.id}">Edit</button>
@@ -745,13 +746,29 @@ function renderNote(note) {
     `
     : "";
   const comments = note.comments?.length
-    ? note.comments.map((comment) => `
-      <article class="comment-item">
-        <strong>${escapeHtml(comment.username)}</strong>
-        <p>${escapeHtml(comment.text)}</p>
-        <span>${formatDateTime(comment.createdAt)}</span>
+    ? note.comments.map((comment) => {
+      const canManageComment = state.user?.role === "admin" || state.user?.id === comment.userId;
+      const commentControls = canManageComment
+        ? `
+          <div class="row-actions note-actions">
+            <button class="small ghost" type="button" data-edit-comment="${note.id}:${comment.id}">Edit</button>
+            <button class="small danger" type="button" data-delete-comment="${note.id}:${comment.id}">Delete</button>
+          </div>
+        `
+        : "";
+      return `
+      <article class="comment-item" data-comment-id="${comment.id}">
+        <div class="feed-heading">
+          <div>
+            <strong>${escapeHtml(comment.username)}</strong>
+            <span>${formatDateTime(comment.createdAt)}${comment.updatedAt ? " - edited" : ""}</span>
+          </div>
+          ${commentControls}
+        </div>
+        <p class="comment-text">${escapeHtml(comment.text)}</p>
       </article>
-    `).join("")
+    `;
+    }).join("")
     : `<p class="hint">No replies yet.</p>`;
 
   return `
@@ -761,9 +778,9 @@ function renderNote(note) {
           <strong>${escapeHtml(note.username)}</strong>
           <span>${formatDateTime(note.createdAt)}${note.updatedAt ? " - edited" : ""}</span>
         </div>
-        ${adminControls}
+        ${noteControls}
       </div>
-      ${note.text ? `<p>${escapeHtml(note.text)}</p>` : ""}
+      ${note.text ? `<p class="note-text">${escapeHtml(note.text)}</p>` : ""}
       ${note.photoDataUrl ? `<img class="note-photo" src="${note.photoDataUrl}" alt="Blog post image">` : ""}
       <div class="comments">
         ${comments}
@@ -774,6 +791,47 @@ function renderNote(note) {
       </div>
     </article>
   `;
+}
+
+function openNoteEditor(noteId) {
+  const note = state.notes.find((item) => item.id === noteId);
+  const article = document.querySelector(`[data-note-id="${CSS.escape(noteId)}"]`);
+  if (!note || !article) return;
+  const existing = article.querySelector("[data-edit-note-form]");
+  if (existing) return existing.querySelector("textarea")?.focus();
+  article.querySelector(".note-text")?.classList.add("hidden");
+  article.querySelector(".note-actions")?.classList.add("hidden");
+  article.querySelector(".feed-heading")?.insertAdjacentHTML("afterend", `
+    <form class="inline-edit-form" data-edit-note-form="${note.id}">
+      <label>Edit blog entry <textarea name="text" rows="7">${escapeHtml(note.text || "")}</textarea></label>
+      <div class="row-actions">
+        <button class="small" type="submit">Save</button>
+        <button class="small ghost" type="button" data-cancel-inline-edit>Cancel</button>
+      </div>
+    </form>
+  `);
+  article.querySelector("[data-edit-note-form] textarea")?.focus();
+}
+
+function openCommentEditor(noteId, commentId) {
+  const note = state.notes.find((item) => item.id === noteId);
+  const comment = note?.comments?.find((item) => item.id === commentId);
+  const article = document.querySelector(`[data-note-id="${CSS.escape(noteId)}"] [data-comment-id="${CSS.escape(commentId)}"]`);
+  if (!note || !comment || !article) return;
+  const existing = article.querySelector("[data-edit-comment-form]");
+  if (existing) return existing.querySelector("textarea")?.focus();
+  article.querySelector(".comment-text")?.classList.add("hidden");
+  article.querySelector(".note-actions")?.classList.add("hidden");
+  article.insertAdjacentHTML("beforeend", `
+    <form class="inline-edit-form" data-edit-comment-form="${note.id}:${comment.id}">
+      <label>Edit reply <textarea name="text" rows="4">${escapeHtml(comment.text || "")}</textarea></label>
+      <div class="row-actions">
+        <button class="small" type="submit">Save</button>
+        <button class="small ghost" type="button" data-cancel-inline-edit>Cancel</button>
+      </div>
+    </form>
+  `);
+  article.querySelector("[data-edit-comment-form] textarea")?.focus();
 }
 
 function renderCalendar() {
@@ -1774,18 +1832,36 @@ $("#noteForm").addEventListener("click", (event) => {
 $("#notesList").addEventListener("click", async (event) => {
   const edit = event.target.closest("[data-edit-note]");
   const del = event.target.closest("[data-delete-note]");
-  const actionButton = edit || del;
+  const editComment = event.target.closest("[data-edit-comment]");
+  const deleteComment = event.target.closest("[data-delete-comment]");
+  const cancelInlineEdit = event.target.closest("[data-cancel-inline-edit]");
+  const actionButton = edit || del || editComment || deleteComment || cancelInlineEdit;
   if (actionButton) actionButton.disabled = true;
   let previousNotes = null;
   try {
+    if (cancelInlineEdit) {
+      renderHome();
+      return;
+    }
     if (edit) {
-      const note = state.notes.find((item) => item.id === edit.dataset.editNote);
-      if (!note) return;
-      const text = prompt("Edit blog entry:", note.text);
-      if (text === null) return;
-      await api(`/api/notes/${edit.dataset.editNote}`, { method: "PUT", body: JSON.stringify({ text }) });
+      openNoteEditor(edit.dataset.editNote);
+      return;
+    }
+    if (editComment) {
+      const [noteId, commentId] = editComment.dataset.editComment.split(":");
+      openCommentEditor(noteId, commentId);
+      return;
+    }
+    if (deleteComment && confirm("Delete this reply?")) {
+      const [noteId, commentId] = deleteComment.dataset.deleteComment.split(":");
+      previousNotes = structuredClone(state.notes);
+      state.notes = state.notes.map((note) => note.id === noteId
+        ? { ...note, comments: (note.comments || []).filter((comment) => comment.id !== commentId) }
+        : note);
+      renderHome();
+      await api(`/api/notes/${noteId}/comments/${commentId}`, { method: "DELETE" });
       await refreshNotes();
-      toast("Blog entry updated.");
+      toast("Reply deleted.");
       return;
     }
     if (del && confirm("Delete this blog entry and its replies?")) {
@@ -1800,7 +1876,7 @@ $("#notesList").addEventListener("click", async (event) => {
       toast("Blog entry deleted.");
     }
   } catch (error) {
-    if (del && previousNotes) {
+    if (previousNotes) {
       state.notes = previousNotes;
       renderHome();
     }
@@ -1811,6 +1887,47 @@ $("#notesList").addEventListener("click", async (event) => {
 });
 
 $("#notesList").addEventListener("submit", async (event) => {
+  const noteEditForm = event.target.closest("[data-edit-note-form]");
+  if (noteEditForm) {
+    event.preventDefault();
+    const submit = noteEditForm.querySelector("button[type='submit']");
+    const text = String(new FormData(noteEditForm).get("text") || "").trim();
+    if (!text) return toast("Blog entry cannot be blank.");
+    if (submit) submit.disabled = true;
+    try {
+      const data = await api(`/api/notes/${noteEditForm.dataset.editNoteForm}`, { method: "PUT", body: JSON.stringify({ text }) });
+      state.notes = data.notes || state.notes;
+      renderHome();
+      toast("Blog entry updated.");
+    } catch (error) {
+      toast(error.message);
+    } finally {
+      if (submit?.isConnected) submit.disabled = false;
+    }
+    return;
+  }
+
+  const commentEditForm = event.target.closest("[data-edit-comment-form]");
+  if (commentEditForm) {
+    event.preventDefault();
+    const submit = commentEditForm.querySelector("button[type='submit']");
+    const text = String(new FormData(commentEditForm).get("text") || "").trim();
+    const [noteId, commentId] = commentEditForm.dataset.editCommentForm.split(":");
+    if (!text) return toast("Reply cannot be blank.");
+    if (submit) submit.disabled = true;
+    try {
+      const data = await api(`/api/notes/${noteId}/comments/${commentId}`, { method: "PUT", body: JSON.stringify({ text }) });
+      state.notes = data.notes || state.notes;
+      renderHome();
+      toast("Reply updated.");
+    } catch (error) {
+      toast(error.message);
+    } finally {
+      if (submit?.isConnected) submit.disabled = false;
+    }
+    return;
+  }
+
   const form = event.target.closest("[data-comment-form]");
   if (!form) return;
   event.preventDefault();
@@ -1896,8 +2013,10 @@ $("#calendarList").addEventListener("click", async (event) => {
       return;
     }
     if (responseButton) {
-      await api(`/api/sub-requests/${responseButton.dataset.subResponse}/respond`, { method: "POST", body: JSON.stringify({ response: responseButton.dataset.response }) });
+      const data = await api(`/api/sub-requests/${responseButton.dataset.subResponse}/respond`, { method: "POST", body: JSON.stringify({ response: responseButton.dataset.response }) });
+      if (data.notes) state.notes = data.notes;
       await refreshCalendarAfterMutation(state.selectedCalendarEventId || "");
+      renderHome();
       return;
     }
     if (editSubButton) {

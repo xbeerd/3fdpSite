@@ -381,16 +381,22 @@ function toggleReaction(item, user, reaction) {
 function addSubConfirmationNote(data, user, request) {
   const eventItem = data.calendarEvents.find((event) => event.id === request.eventId) || null;
   const dedupeKey = `sub-confirm-${request.id}-${user.id}`;
-  if (data.notes.some((note) => note.systemKey === dedupeKey)) return null;
   const context = [
     eventItem?.date ? formatDisplayDate(eventItem.date) : "",
     eventItem?.opponent ? `vs ${eventItem.opponent}` : ""
   ].filter(Boolean).join(" ");
+  const text = `${userBowlerName(user)} will bowl for ${request.requestedFor || request.requestedBy}${context ? ` on ${context}` : ""}.`;
+  const existing = data.notes.find((note) => note.systemKey === dedupeKey);
+  if (existing) {
+    existing.text = text;
+    existing.updatedAt = new Date().toISOString();
+    return null;
+  }
   const note = {
     id: crypto.randomUUID(),
     userId: user.id,
     username: user.username,
-    text: `${userBowlerName(user)} will bowl for ${request.requestedFor || request.requestedBy}${context ? ` on ${context}` : ""}.`,
+    text,
     comments: [],
     systemKey: dedupeKey,
     createdAt: new Date().toISOString()
@@ -1616,11 +1622,10 @@ exports.handler = async (event) => {
         request.status = "confirmed";
         request.confirmedAt = new Date().toISOString();
       }
-      const subConfirmationNote = response === "can" && previousResponse !== "can"
-        ? addSubConfirmationNote(data, user, request)
-        : null;
+      const shouldNotifyConfirmed = response === "can" && previousResponse !== "can";
+      if (shouldNotifyConfirmed) addSubConfirmationNote(data, user, request);
       await saveData(data);
-      if (subConfirmationNote) {
+      if (shouldNotifyConfirmed) {
         await sendSubConfirmedNotifications(data, request, responseEntry, eventItem);
         await sendBlogNotification(data, user.id, {
           title: "3FDP sub confirmed",

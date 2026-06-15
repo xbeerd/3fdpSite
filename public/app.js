@@ -675,13 +675,17 @@ async function disablePushAlerts() {
 
 function renderHome() {
   $("#subSummary").innerHTML = state.subRequests.length
-    ? state.subRequests.map((request) => `
+    ? state.subRequests.map((request) => {
+      const confirmed = request.responses?.find((item) => item.response === "can");
+      return `
       <article class="summary-item">
-        <strong>Sub needed:</strong> ${escapeHtml(request.event?.title || "Bowling")}
+        <strong>${confirmed ? "Sub filled:" : "Sub needed:"}</strong> ${escapeHtml(request.event?.title || "Bowling")}
         <span>${escapeHtml(formatDate(request.event?.date || ""))}</span>
+        ${confirmed ? `<span>${escapeHtml(confirmed.bowlerName || confirmed.username)} for ${escapeHtml(request.requestedFor || request.requestedBy)}</span>` : ""}
         <button class="small ghost" type="button" data-open-sub-event="${request.eventId}">View on calendar</button>
       </article>
-    `).join("")
+    `;
+    }).join("")
     : `<p class="hint">No open sub requests right now.</p>`;
 
   $("#notesList").innerHTML = state.notes.length
@@ -1027,11 +1031,12 @@ function renderCalendarGrid() {
           <strong>${date.getDate()}</strong>
           ${events.map((eventItem) => {
             const request = state.subRequests.find((item) => item.eventId === eventItem.id);
-            const pendingSub = request && !request.responses?.some((item) => item.response === "can");
+            const confirmedSub = request?.responses?.find((item) => item.response === "can");
+            const pendingSub = request && !confirmedSub;
             return `
               <button class="calendar-event ${eventItem.id === state.selectedCalendarEventId ? "is-selected" : ""} ${pendingSub ? "is-sub-pending" : ""}" type="button" data-select-event="${eventItem.id}">
                 ${escapeHtml(eventItem.opponent || eventItem.title || "Bowling")}
-                ${request ? `<span>Sub needed</span>` : ""}
+                ${request ? `<span>${confirmedSub ? "Sub filled" : "Sub needed"}</span>` : ""}
               </button>
             `;
           }).join("")}
@@ -1042,7 +1047,8 @@ function renderCalendarGrid() {
 }
 
 function renderSubRequest(request) {
-  const yes = request.responses.filter((item) => item.response === "can").map((item) => item.username).join(", ") || "No one yet";
+  const confirmed = request.responses.find((item) => item.response === "can") || null;
+  const yes = request.responses.filter((item) => item.response === "can").map((item) => item.bowlerName || item.username).join(", ") || "No one yet";
   const maybe = request.responses.filter((item) => item.response === "maybe").map((item) => item.username).join(", ") || "No one yet";
   const no = request.responses.filter((item) => item.response === "cant").map((item) => item.username).join(", ") || "No one yet";
   const canManage = state.user?.id === request.requestedByUserId || state.user?.role === "admin";
@@ -1053,17 +1059,20 @@ function renderSubRequest(request) {
     `
     : "";
   return `
-    <div class="sub-box">
-      <strong>${escapeHtml(request.requestedFor || request.requestedBy)} needs a sub</strong>
+    <div class="sub-box ${confirmed ? "is-filled" : ""}">
+      <strong>${confirmed ? "Sub filled" : `${escapeHtml(request.requestedFor || request.requestedBy)} needs a sub`}</strong>
+      ${confirmed ? `<p><b>${escapeHtml(confirmed.bowlerName || confirmed.username)}</b> will bowl for ${escapeHtml(request.requestedFor || request.requestedBy)}.</p>` : ""}
       <p>${escapeHtml(request.note || "")}${request.updatedAt ? ` <span class="muted">(edited)</span>` : ""}</p>
       <p><b>Can:</b> ${escapeHtml(yes)}</p>
       <p><b>Maybe:</b> ${escapeHtml(maybe)}</p>
       <p><b>Can't:</b> ${escapeHtml(no)}</p>
       <div class="row-actions">
-        <button class="small" type="button" data-sub-response="${request.id}" data-response="can">I can sub</button>
-        <button class="small ghost" type="button" data-sub-response="${request.id}" data-response="maybe">I can maybe sub</button>
-        <button class="small ghost" type="button" data-sub-response="${request.id}" data-response="cant">I can't sub</button>
-        ${canManage && !request.responses.some((item) => item.response === "can") ? `<button class="small ghost" type="button" data-resend-sub-request="${request.id}">Resend sub alert</button>` : ""}
+        ${confirmed ? "" : `
+          <button class="small" type="button" data-sub-response="${request.id}" data-response="can">I can sub</button>
+          <button class="small ghost" type="button" data-sub-response="${request.id}" data-response="maybe">I can maybe sub</button>
+          <button class="small ghost" type="button" data-sub-response="${request.id}" data-response="cant">I can't sub</button>
+        `}
+        ${canManage && !confirmed ? `<button class="small ghost" type="button" data-resend-sub-request="${request.id}">Resend sub alert</button>` : ""}
         ${ownerControls}
       </div>
     </div>

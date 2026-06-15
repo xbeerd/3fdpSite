@@ -669,6 +669,11 @@ textarea:-webkit-autofill {
 .event-card { display: grid; gap: 0.8rem; }
 .sub-box { background: #fff4e8; }
 
+.sub-box.is-filled {
+  background: #edf7ee;
+  border-color: #9bcf9f;
+}
+
 .settings-row {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;

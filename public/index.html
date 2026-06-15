@@ -59,11 +59,18 @@
         <button id="showRegister" class="ghost" type="button">New user</button>
         <form id="registerForm" class="form hidden">
           <p class="eyebrow">New teammate</p>
-          <p class="hint">After signing up, enable Push Notifications so you get team updates, blog replies, and sub requests.</p>
+          <p class="hint">Push Notifications are recommended for important updates like sub requests, team chat, and blog replies. You can turn them on or off later in User options.</p>
           <label>Email <input name="email" type="email" required></label>
           <label>Username <input name="username" type="text" required></label>
+          <label>Recap sheet name <input name="recapName" type="text" maxlength="80" placeholder="Name as shown on bowling recap"></label>
+          <label>Bowler type
+            <select name="bowlerType">
+              <option value="regular">Regular bowler</option>
+              <option value="sub">Sub bowler</option>
+            </select>
+          </label>
           <label>Password <input name="password" type="password" minlength="8" required></label>
-          <label class="check-row"><input name="enableSubAlerts" type="checkbox"> Enable Push Notifications after signup</label>
+          <label class="check-row"><input name="enableSubAlerts" type="checkbox" checked> Enable Push Notifications after signup</label>
           <label id="adminSetupCodeField" class="hidden">Admin setup code <input name="setupCode" type="text" placeholder="Only needed for first admin setup"></label>
           <div class="row-actions">
             <button type="submit">Create account</button>
@@ -103,6 +110,12 @@
           <h2>User options</h2>
           <form id="profileForm" class="form">
             <label>Recap sheet name <input name="recapName" type="text" maxlength="80" placeholder="Name as shown on bowling recap"></label>
+            <label>Bowler type
+              <select name="bowlerType">
+                <option value="regular">Regular bowler</option>
+                <option value="sub">Sub bowler</option>
+              </select>
+            </label>
             <div class="settings-row">
               <div>
                 <strong>Push Notifications</strong>
@@ -136,6 +149,7 @@
             </div>
             <div class="row-actions">
               <button id="downloadAllIcs" type="button" class="ghost">Add Season to Calendar</button>
+              <button id="downloadUpdateIcs" type="button" class="ghost">Update Season Calendar</button>
               <button id="downloadCancelIcs" type="button" class="ghost">Remove Season from Calendar</button>
             </div>
           </div>
@@ -152,6 +166,7 @@
             <label>Location <input name="location" type="text" placeholder="Bowling alley"></label>
             <label>Lane <input name="lane" type="text" placeholder="TBD"></label>
             <label>Opponent <input name="opponent" type="text" placeholder="Opponent"></label>
+            <label>Lineup <input name="lineup" type="text" placeholder="Bowler 1, Bowler 2, Bowler 3"></label>
             <label>Start <input name="startTime" type="time"></label>
             <label>Practice <input name="practiceTime" type="time"></label>
             <button type="submit">Add event</button>
@@ -346,6 +361,12 @@
           <form id="adminCreateUserForm" class="form inline-form">
             <label>Email <input name="email" type="email" required></label>
             <label>Username <input name="username" type="text" required></label>
+            <label>Bowler type
+              <select name="bowlerType">
+                <option value="regular">Regular bowler</option>
+                <option value="sub">Sub bowler</option>
+              </select>
+            </label>
             <label>Temp password <input name="password" type="text" value="changeme123" minlength="8" required></label>
             <button type="submit">Create user</button>
           </form>
@@ -366,6 +387,12 @@
             <label>Username <input name="username" type="text" required></label>
             <label>Email <input name="email" type="email" required></label>
             <label>Recap sheet name <input name="recapName" type="text" maxlength="80"></label>
+            <label>Bowler type
+              <select name="bowlerType">
+                <option value="regular">Regular bowler</option>
+                <option value="sub">Sub bowler</option>
+              </select>
+            </label>
             <label>Role
               <select name="role">
                 <option value="user">User</option>

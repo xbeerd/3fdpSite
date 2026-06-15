@@ -14,6 +14,7 @@ const state = {
   graphSeries: [],
   adminUsers: [],
   adminSetupOpen: false,
+  regularLineup: [],
   pushConfigured: false,
   pushSubscribed: false,
   pushPreferences: { subAlerts: true, blogAlerts: true, chatAlerts: true },
@@ -372,6 +373,7 @@ async function refreshBootstrap() {
   state.notes = data.notes;
   state.events = data.events;
   state.subRequests = data.subRequests;
+  state.regularLineup = data.regularLineup || state.regularLineup || [];
   state.adminSetupOpen = Boolean(data.adminSetupOpen);
   renderHome();
   renderCalendar();
@@ -390,6 +392,7 @@ async function refreshCalendarState(preferredEventId = "") {
   state.notes = data.notes;
   state.events = data.events;
   state.subRequests = data.subRequests;
+  state.regularLineup = data.regularLineup || state.regularLineup || [];
   state.adminSetupOpen = Boolean(data.adminSetupOpen);
   if (preferredEventId && state.events.some((eventItem) => eventItem.id === preferredEventId)) {
     state.selectedCalendarEventId = preferredEventId;
@@ -452,11 +455,11 @@ async function refreshNotes() {
   renderHome();
 }
 
-async function refreshChatMessages() {
+async function refreshChatMessages(options = {}) {
   if (!state.user) return;
   const data = await api("/api/chat/messages");
   state.chatMessages = data.messages || [];
-  renderChat();
+  renderChat(options);
 }
 
 async function refreshNotifications({ open = state.notificationOpen, markSeen = false } = {}) {
@@ -472,6 +475,7 @@ async function refreshNotifications({ open = state.notificationOpen, markSeen = 
   state.events = bootstrap.events;
   state.subRequests = bootstrap.subRequests;
   state.notes = bootstrap.notes;
+  state.regularLineup = bootstrap.regularLineup || state.regularLineup || [];
   state.chatMessages = chat.messages || [];
   ensureNotificationBaselines();
   state.notifications = buildNotifications();
@@ -515,6 +519,8 @@ async function refreshCurrentView() {
     const data = await api("/api/bootstrap");
     state.notes = data.notes;
     state.subRequests = data.subRequests;
+    state.events = data.events;
+    state.regularLineup = data.regularLineup || state.regularLineup || [];
     renderHome();
     return;
   }
@@ -541,6 +547,8 @@ async function refreshCurrentView() {
     const data = await api("/api/bootstrap");
     state.config = data.config;
     state.schedule = data.schedule;
+    state.events = data.events;
+    state.regularLineup = data.regularLineup || state.regularLineup || [];
     renderContestHeader();
     await refreshAdmin();
     return;
@@ -571,6 +579,7 @@ function renderProfileOptions() {
   const form = $("#profileForm");
   if (!form || !state.user) return;
   form.elements.recapName.value = state.user.recapName || "";
+  form.elements.bowlerType.value = state.user.bowlerType || "regular";
 }
 
 async function pushRegistration() {
@@ -681,13 +690,45 @@ function renderHome() {
   renderPushControls();
 }
 
-function renderChat() {
+const reactionChoices = [
+  { key: "like", label: "👍" },
+  { key: "dislike", label: "👎" },
+  { key: "mad", label: "😡" },
+  { key: "laugh", label: "😂" },
+  { key: "bowl", label: "🎳" }
+];
+
+function reactionKey(value) {
+  return { "👍": "like", "👎": "dislike", "❤️": "mad", "❤": "mad", "😡": "mad", "heart": "mad", "😂": "laugh", "🎳": "bowl" }[value] || value;
+}
+
+function renderReactionControls(item, type, target) {
+  const reactions = Array.isArray(item.reactions) ? item.reactions : [];
+  return `
+    <div class="reaction-row">
+      ${reactionChoices.map(({ key, label }) => {
+        const matches = reactions.filter((entry) => reactionKey(entry.reaction) === key);
+        const active = matches.some((entry) => entry.userId === state.user?.id);
+        const names = matches.map((entry) => entry.username).filter(Boolean).join(", ");
+        return `
+          <button class="reaction-button ${active ? "is-active" : ""}" type="button" data-react-type="${type}" data-react-target="${escapeHtml(target)}" data-reaction="${key}" title="${escapeHtml(names || label)}">
+            <span>${label}</span>${matches.length ? `<b>${matches.length}</b>` : ""}
+          </button>
+        `;
+      }).join("")}
+    </div>
+  `;
+}
+
+function renderChat(options = {}) {
   const chat = $("#teamChat");
   if (!chat) return;
+  const messages = $("#chatMessages");
+  const wasNearBottom = !messages || (messages.scrollHeight - messages.scrollTop - messages.clientHeight < 48);
   chat.classList.toggle("hidden", !state.user);
   $("#chatPanel").classList.toggle("hidden", !state.chatOpen);
   $("#chatToggle").setAttribute("aria-expanded", String(state.chatOpen));
-  $("#chatMessages").innerHTML = state.chatMessages.length
+  messages.innerHTML = state.chatMessages.length
     ? state.chatMessages.map((message) => `
       <article class="chat-message ${message.userId === state.user?.id ? "is-mine" : ""}">
         <div>
@@ -697,10 +738,11 @@ function renderChat() {
         ${message.text ? `<p>${escapeHtml(message.text)}</p>` : ""}
         ${message.imageDataUrl ? `<button class="chat-photo-thumb" type="button" data-chat-image="${escapeHtml(message.id)}"><img src="${message.imageDataUrl}" alt="Chat photo from ${escapeHtml(message.username)}"></button>` : ""}
         ${message.imageExpiredAt ? `<p class="muted">Photo expired.</p>` : ""}
+        ${renderReactionControls(message, "chat", message.id)}
       </article>
     `).join("")
     : `<p class="empty">No chat messages yet.</p>`;
-  if (state.chatOpen) $("#chatMessages").scrollTop = $("#chatMessages").scrollHeight;
+  if (state.chatOpen && (options.forceScroll || wasNearBottom)) messages.scrollTop = messages.scrollHeight;
   renderChatPhotoPreview();
 }
 
@@ -721,6 +763,27 @@ function openChatImage(messageId) {
   if (!message?.imageDataUrl) return;
   $("#chatImageFull").src = message.imageDataUrl;
   $("#chatImageDialog").showModal();
+}
+
+async function toggleReaction(type, target, reaction) {
+  if (type === "chat") {
+    const data = await api(`/api/chat/messages/${encodeURIComponent(target)}/reactions`, { method: "POST", body: JSON.stringify({ reaction }) });
+    state.chatMessages = data.messages || state.chatMessages;
+    renderChat();
+    return;
+  }
+  if (type === "note") {
+    const data = await api(`/api/notes/${encodeURIComponent(target)}/reactions`, { method: "POST", body: JSON.stringify({ reaction }) });
+    state.notes = data.notes || state.notes;
+    renderHome();
+    return;
+  }
+  if (type === "comment") {
+    const [noteId, commentId] = target.split(":");
+    const data = await api(`/api/notes/${encodeURIComponent(noteId)}/comments/${encodeURIComponent(commentId)}/reactions`, { method: "POST", body: JSON.stringify({ reaction }) });
+    state.notes = data.notes || state.notes;
+    renderHome();
+  }
 }
 
 function renderNotificationBadge(count = state.notifications.length) {
@@ -760,6 +823,7 @@ function renderNotePhotoPreview() {
 
 function renderNote(note) {
   const canManageNote = state.user?.role === "admin" || state.user?.id === note.userId;
+  const replyCount = note.comments?.length || 0;
   const noteControls = canManageNote
     ? `
       <div class="row-actions note-actions">
@@ -789,6 +853,7 @@ function renderNote(note) {
           ${commentControls}
         </div>
         <p class="comment-text">${escapeHtml(comment.text)}</p>
+        ${renderReactionControls(comment, "comment", `${note.id}:${comment.id}`)}
       </article>
     `;
     }).join("")
@@ -805,13 +870,15 @@ function renderNote(note) {
       </div>
       ${note.text ? `<p class="note-text">${escapeHtml(note.text)}</p>` : ""}
       ${note.photoDataUrl ? `<img class="note-photo" src="${note.photoDataUrl}" alt="Blog post image">` : ""}
-      <div class="comments">
-        ${comments}
+      ${renderReactionControls(note, "note", note.id)}
+      <details class="comments">
+        <summary>${replyCount ? `Replies (${replyCount})` : "Reply"}</summary>
+        <div class="comment-list">${comments}</div>
         <form class="comment-form" data-comment-form="${note.id}">
           <label>Reply <textarea name="text" rows="2" placeholder="Write a reply..."></textarea></label>
           <button class="small" type="submit">Post reply</button>
         </form>
-      </div>
+      </details>
     </article>
   `;
 }
@@ -892,6 +959,7 @@ function editCalendarEvent(eventId) {
   form.elements.location.value = eventItem.location || "";
   form.elements.lane.value = eventItem.lane || "";
   form.elements.opponent.value = eventItem.opponent || "";
+  form.elements.lineup.value = eventItem.lineup?.join(", ") || "";
   form.elements.startTime.value = eventItem.startTime || "";
   form.elements.practiceTime.value = eventItem.practiceTime || "";
   form.querySelector("button[type='submit']").textContent = "Save event";
@@ -905,6 +973,7 @@ function renderSelectedCalendarEvent() {
   if (!eventItem) return `<p class="empty">Select an event on the calendar to view details.</p>`;
   const request = state.subRequests.find((item) => item.eventId === eventItem.id);
   const recap = scoreRecapForDate(eventItem.date);
+  const lineup = eventItem.lineup?.length ? eventItem.lineup : state.regularLineup;
   const adminControls = state.user?.role === "admin"
     ? `
       <button class="small ghost" type="button" data-edit-event="${eventItem.id}">Edit event</button>
@@ -919,6 +988,7 @@ function renderSelectedCalendarEvent() {
         <p>${escapeHtml(formatDate(eventItem.date))} - practice ${escapeHtml(eventItem.practiceTime || "")}</p>
         <p>Start ${escapeHtml(eventItem.startTime || "")} - Lane ${escapeHtml(eventItem.lane || "TBD")} - ${escapeHtml(eventItem.opponent || "Opponent TBD")}</p>
         ${eventItem.location ? `<p>Location: ${escapeHtml(eventItem.location)}</p>` : ""}
+        ${lineup?.length ? `<p><strong>Lineup:</strong> ${escapeHtml(lineup.join(", "))}</p>` : ""}
       </div>
       <div class="row-actions">
         <button class="small ghost" type="button" data-ics="${eventItem.id}">Add to Calendar</button>
@@ -957,8 +1027,9 @@ function renderCalendarGrid() {
           <strong>${date.getDate()}</strong>
           ${events.map((eventItem) => {
             const request = state.subRequests.find((item) => item.eventId === eventItem.id);
+            const pendingSub = request && !request.responses?.some((item) => item.response === "can");
             return `
-              <button class="calendar-event ${eventItem.id === state.selectedCalendarEventId ? "is-selected" : ""}" type="button" data-select-event="${eventItem.id}">
+              <button class="calendar-event ${eventItem.id === state.selectedCalendarEventId ? "is-selected" : ""} ${pendingSub ? "is-sub-pending" : ""}" type="button" data-select-event="${eventItem.id}">
                 ${escapeHtml(eventItem.opponent || eventItem.title || "Bowling")}
                 ${request ? `<span>Sub needed</span>` : ""}
               </button>
@@ -972,6 +1043,7 @@ function renderCalendarGrid() {
 
 function renderSubRequest(request) {
   const yes = request.responses.filter((item) => item.response === "can").map((item) => item.username).join(", ") || "No one yet";
+  const maybe = request.responses.filter((item) => item.response === "maybe").map((item) => item.username).join(", ") || "No one yet";
   const no = request.responses.filter((item) => item.response === "cant").map((item) => item.username).join(", ") || "No one yet";
   const canManage = state.user?.id === request.requestedByUserId || state.user?.role === "admin";
   const ownerControls = canManage
@@ -982,13 +1054,16 @@ function renderSubRequest(request) {
     : "";
   return `
     <div class="sub-box">
-      <strong>${escapeHtml(request.requestedBy)} needs a sub</strong>
+      <strong>${escapeHtml(request.requestedFor || request.requestedBy)} needs a sub</strong>
       <p>${escapeHtml(request.note || "")}${request.updatedAt ? ` <span class="muted">(edited)</span>` : ""}</p>
       <p><b>Can:</b> ${escapeHtml(yes)}</p>
+      <p><b>Maybe:</b> ${escapeHtml(maybe)}</p>
       <p><b>Can't:</b> ${escapeHtml(no)}</p>
       <div class="row-actions">
         <button class="small" type="button" data-sub-response="${request.id}" data-response="can">I can sub</button>
+        <button class="small ghost" type="button" data-sub-response="${request.id}" data-response="maybe">I can maybe sub</button>
         <button class="small ghost" type="button" data-sub-response="${request.id}" data-response="cant">I can't sub</button>
+        ${canManage && !request.responses.some((item) => item.response === "can") ? `<button class="small ghost" type="button" data-resend-sub-request="${request.id}">Resend sub alert</button>` : ""}
         ${ownerControls}
       </div>
     </div>
@@ -1477,6 +1552,7 @@ function renderAdmin() {
       <td>
         <strong>${escapeHtml(user.username)}</strong>
         <span class="muted">${escapeHtml(user.role)}</span>
+        <span class="muted">${user.bowlerType === "sub" ? "Sub bowler" : "Regular bowler"}</span>
       </td>
       <td>
         <span>${escapeHtml(user.email)}</span>
@@ -1539,6 +1615,8 @@ function csvToEvents(text) {
       if (key === "opponent") row.opponent = value;
       if (key === "starttime") row.startTime = value;
       if (key === "practicetime") row.practiceTime = value;
+      if (["lineup", "regularbowlers", "bowlers", "teamlineup"].includes(key)) row.lineup = value;
+      if (/^bowler[1-5]$/.test(key) && value) row.lineup = [...(Array.isArray(row.lineup) ? row.lineup : []), value];
     });
     row.title = row.leagueName
       ? `${row.leagueName}${row.opponent ? ` vs ${row.opponent}` : ""}`
@@ -1580,6 +1658,7 @@ function eventToIcsEntry(eventItem, method = "PUBLISH") {
   const date = eventItem.date.replaceAll("-", "");
   const practice = timeToIcs(eventItem.practiceTime || eventItem.startTime);
   const end = addMinutesToIcsTime(practice, 210);
+  const lineup = eventItem.lineup?.length ? `; Lineup ${eventItem.lineup.join(", ")}` : "";
   return [
     "BEGIN:VEVENT",
     `UID:${eventItem.id}@3fdp`,
@@ -1590,7 +1669,7 @@ function eventToIcsEntry(eventItem, method = "PUBLISH") {
     method === "CANCEL" ? "SEQUENCE:1" : "",
     `SUMMARY:${escapeIcs(eventItem.title || "Bowling")}`,
     eventItem.location ? `LOCATION:${escapeIcs(eventItem.location)}` : "",
-    `DESCRIPTION:${escapeIcs(`Start ${eventItem.startTime || ""}; Lane ${eventItem.lane || ""}; Opponent ${eventItem.opponent || ""}${eventItem.location ? `; Location ${eventItem.location}` : ""}`)}`,
+    `DESCRIPTION:${escapeIcs(`Start ${eventItem.startTime || ""}; Lane ${eventItem.lane || ""}; Opponent ${eventItem.opponent || ""}${eventItem.location ? `; Location ${eventItem.location}` : ""}${lineup}`)}`,
     "END:VEVENT"
   ].filter(Boolean).join("\r\n");
 }
@@ -1666,17 +1745,17 @@ $("#notificationList").addEventListener("click", async (event) => {
   renderNotifications();
   if (item.dataset.notificationType === "chat") {
     state.chatOpen = true;
-    renderChat();
-    await refreshChatMessages().catch((error) => toast(error.message));
+    renderChat({ forceScroll: true });
+    await refreshChatMessages({ forceScroll: true }).catch((error) => toast(error.message));
     return;
   }
   if (item.dataset.notificationTarget) showCalendarEvent(item.dataset.notificationTarget);
 });
 $("#chatToggle").addEventListener("click", async () => {
   state.chatOpen = !state.chatOpen;
-  renderChat();
+  renderChat({ forceScroll: state.chatOpen });
   if (state.chatOpen) {
-    await refreshChatMessages().catch((error) => toast(error.message));
+    await refreshChatMessages({ forceScroll: true }).catch((error) => toast(error.message));
     markChatNotificationsSeen();
     state.notifications = buildNotifications();
     renderNotifications();
@@ -1698,7 +1777,7 @@ $("#chatForm").addEventListener("submit", async (event) => {
     state.chatMessages = data.messages || state.chatMessages;
     state.chatPhotoDataUrl = "";
     form.reset();
-    renderChat();
+    renderChat({ forceScroll: true });
   } catch (error) {
     toast(error.message);
   } finally {
@@ -1730,6 +1809,11 @@ $("#chatForm").addEventListener("click", (event) => {
 });
 
 $("#chatMessages").addEventListener("click", (event) => {
+  const reactionButton = event.target.closest("[data-react-type]");
+  if (reactionButton) {
+    toggleReaction(reactionButton.dataset.reactType, reactionButton.dataset.reactTarget, reactionButton.dataset.reaction).catch((error) => toast(error.message));
+    return;
+  }
   const imageButton = event.target.closest("[data-chat-image]");
   if (!imageButton) return;
   openChatImage(imageButton.dataset.chatImage);
@@ -1828,8 +1912,7 @@ $("#registerForm").addEventListener("submit", async (event) => {
     submit.textContent = "Creating...";
   }
   try {
-    await api("/api/register", { method: "POST", body: JSON.stringify(Object.fromEntries(formData)) });
-    const data = await api("/api/login", { method: "POST", body: JSON.stringify({ email: formData.get("email"), password: formData.get("password") }) });
+    const data = await api("/api/register", { method: "POST", body: JSON.stringify(Object.fromEntries(formData)) });
     state.user = data.user;
     state.view = "home";
     await refreshBootstrap();
@@ -1913,6 +1996,18 @@ $("#noteForm").addEventListener("click", (event) => {
 });
 
 $("#notesList").addEventListener("click", async (event) => {
+  const reactionButton = event.target.closest("[data-react-type]");
+  if (reactionButton) {
+    reactionButton.disabled = true;
+    try {
+      await toggleReaction(reactionButton.dataset.reactType, reactionButton.dataset.reactTarget, reactionButton.dataset.reaction);
+    } catch (error) {
+      toast(error.message);
+    } finally {
+      if (reactionButton.isConnected) reactionButton.disabled = false;
+    }
+    return;
+  }
   const edit = event.target.closest("[data-edit-note]");
   const del = event.target.closest("[data-delete-note]");
   const editComment = event.target.closest("[data-edit-comment]");
@@ -2060,7 +2155,8 @@ $("#calendarList").addEventListener("click", async (event) => {
   const deleteEventButton = event.target.closest("[data-delete-event]");
   const editSubButton = event.target.closest("[data-edit-sub-request]");
   const deleteSubButton = event.target.closest("[data-delete-sub-request]");
-  const actionButton = subButton || responseButton || viewRecapButton || editEventButton || deleteEventButton || editSubButton || deleteSubButton;
+  const resendSubButton = event.target.closest("[data-resend-sub-request]");
+  const actionButton = subButton || responseButton || viewRecapButton || editEventButton || deleteEventButton || editSubButton || deleteSubButton || resendSubButton;
   if (actionButton) actionButton.disabled = true;
   let previousEvents = null;
   let previousSubRequests = null;
@@ -2096,10 +2192,17 @@ $("#calendarList").addEventListener("click", async (event) => {
       return;
     }
     if (responseButton) {
+      if (responseButton.dataset.response === "can" && !confirm("Confirm that you will bowl as the sub?")) return;
       const data = await api(`/api/sub-requests/${responseButton.dataset.subResponse}/respond`, { method: "POST", body: JSON.stringify({ response: responseButton.dataset.response }) });
       if (data.notes) state.notes = data.notes;
       await refreshCalendarAfterMutation(state.selectedCalendarEventId || "");
       renderHome();
+      return;
+    }
+    if (resendSubButton) {
+      await api(`/api/sub-requests/${resendSubButton.dataset.resendSubRequest}/resend`, { method: "POST" });
+      await refreshCalendarAfterMutation(state.selectedCalendarEventId || "");
+      toast("Sub alert resent.");
       return;
     }
     if (editSubButton) {
@@ -2148,6 +2251,11 @@ $("#calendarGrid").addEventListener("click", (event) => {
 $("#downloadAllIcs").addEventListener("click", () => {
   if (!state.events.length) return toast("No events to download.");
   downloadText("3fdp-season.ics", eventsToIcs(state.events));
+});
+
+$("#downloadUpdateIcs").addEventListener("click", () => {
+  if (!state.events.length) return toast("No events to update.");
+  downloadText("3fdp-season-update.ics", eventsToIcs(state.events));
 });
 
 $("#downloadCancelIcs").addEventListener("click", () => {
@@ -2625,6 +2733,7 @@ $("#adminUsers").addEventListener("click", async (event) => {
       form.elements.username.value = user.username || "";
       form.elements.email.value = user.email || "";
       form.elements.recapName.value = user.recapName || "";
+      form.elements.bowlerType.value = user.bowlerType || "regular";
       form.elements.role.value = user.role || "user";
       $("#adminEditUserDialog")?.showModal();
       return;

@@ -150,6 +150,7 @@ function publicUser(user) {
     email: user.email,
     username: user.username,
     recapName: user.recapName || "",
+    bowlerType: user.bowlerType === "sub" ? "sub" : "regular",
     role: user.role,
     passwordSetupRequired: Boolean(user.passwordSetupRequired),
     createdAt: user.createdAt
@@ -347,6 +348,36 @@ function findNoteComment(note, commentId) {
   return (note?.comments || []).find((comment) => comment.id === commentId);
 }
 
+const REACTION_ALIASES = new Map([
+  ["like", "like"],
+  ["dislike", "dislike"],
+  ["heart", "mad"],
+  ["mad", "mad"],
+  ["laugh", "laugh"],
+  ["bowl", "bowl"],
+  ["👍", "like"],
+  ["👎", "dislike"],
+  ["❤️", "mad"],
+  ["❤", "mad"],
+  ["😡", "mad"],
+  ["😂", "laugh"],
+  ["🎳", "bowl"]
+]);
+
+function normalizeReaction(value) {
+  const reaction = String(value || "").trim();
+  return REACTION_ALIASES.get(reaction) || "";
+}
+
+function toggleReaction(item, user, reaction) {
+  const existing = Array.isArray(item.reactions) ? item.reactions : [];
+  const current = existing.find((entry) => entry.userId === user.id);
+  item.reactions = existing.filter((entry) => entry.userId !== user.id);
+  if (current?.reaction !== reaction) {
+    item.reactions.push({ userId: user.id, username: user.username, reaction, createdAt: new Date().toISOString() });
+  }
+}
+
 function addSubConfirmationNote(data, user, request) {
   const eventItem = data.calendarEvents.find((event) => event.id === request.eventId) || null;
   const dedupeKey = `sub-confirm-${request.id}-${user.id}`;
@@ -359,7 +390,7 @@ function addSubConfirmationNote(data, user, request) {
     id: crypto.randomUUID(),
     userId: user.id,
     username: user.username,
-    text: `${user.username} can sub for ${request.requestedBy}${context ? ` on ${context}` : ""}.`,
+    text: `${userBowlerName(user)} will bowl for ${request.requestedFor || request.requestedBy}${context ? ` on ${context}` : ""}.`,
     comments: [],
     systemKey: dedupeKey,
     createdAt: new Date().toISOString()
@@ -384,8 +415,37 @@ function visibleSubRequests(data) {
     .sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)));
 }
 
+function visibleCalendarEvents(data) {
+  return data.calendarEvents.map((eventItem) => eventWithLineup(data, eventItem));
+}
+
 function findSubRequest(data, requestId) {
   return data.subRequests.find((request) => request.id === requestId);
+}
+
+function confirmedSubResponse(request) {
+  return (request?.responses || []).find((response) => response.response === "can") || null;
+}
+
+function effectiveLineupForEvent(eventItem, request = null, data = null) {
+  const base = normalizeLineup(eventItem?.lineup, data || { users: [] });
+  const confirmed = confirmedSubResponse(request);
+  if (!confirmed) return base;
+  const regularName = String(request.requestedFor || request.requestedBy || "").trim();
+  const subName = String(confirmed.bowlerName || confirmed.username || "").trim();
+  if (!regularName || !subName) return base;
+  let replaced = false;
+  const next = base.map((name) => {
+    if (name.toLowerCase() !== regularName.toLowerCase()) return name;
+    replaced = true;
+    return `${subName} (sub for ${regularName})`;
+  });
+  return replaced ? next : [...next, `${subName} (sub for ${regularName})`];
+}
+
+function eventWithLineup(data, eventItem) {
+  const request = data.subRequests.find((candidate) => candidate.eventId === eventItem.id) || null;
+  return { ...eventItem, lineup: effectiveLineupForEvent(eventItem, request, data) };
 }
 
 function eventDuplicateKey(row) {
@@ -406,6 +466,29 @@ function formatDisplayDate(value) {
   return match ? `${match[2]}-${match[3]}-${match[1]}` : text;
 }
 
+function normalizeBowlerType(value) {
+  return String(value || "").trim().toLowerCase() === "sub" ? "sub" : "regular";
+}
+
+function userBowlerName(user) {
+  return String(user?.recapName || user?.username || "").trim();
+}
+
+function regularBowlerNames(data) {
+  return (data.users || [])
+    .filter((user) => normalizeBowlerType(user.bowlerType) === "regular")
+    .map(userBowlerName)
+    .filter(Boolean);
+}
+
+function normalizeLineup(value, data) {
+  const raw = Array.isArray(value)
+    ? value
+    : String(value || "").split(/[|;,]/);
+  const lineup = raw.map((name) => String(name || "").trim()).filter(Boolean);
+  return lineup.length ? lineup : regularBowlerNames(data);
+}
+
 function normalizedCalendarRow(row, data) {
   return {
     date: row.date,
@@ -415,6 +498,7 @@ function normalizedCalendarRow(row, data) {
     location: row.location || "",
     leagueName: row.leagueName || "",
     opponent: row.opponent || "",
+    lineup: normalizeLineup(row.lineup || row.regularBowlers || row.bowlers, data),
     title: row.title || (row.leagueName ? `${row.leagueName}${row.opponent ? ` vs ${row.opponent}` : ""}` : `Bowling vs ${row.opponent || "TBD"}`)
   };
 }
@@ -898,6 +982,56 @@ async function sendSubRequestNotifications(data, request, eventItem) {
   }
 }
 
+async function sendSubReminderNotifications(data, request, eventItem) {
+  if (!pushConfigured() || !data.pushSubscriptions.length) return;
+  const subscriptions = data.pushSubscriptions.filter((saved) => normalizePushPreferences(saved.preferences).subAlerts);
+  if (!subscriptions.length) return;
+  const payload = JSON.stringify({
+    title: "3FDP sub still needed",
+    body: `${request.requestedBy} still needs a confirmed sub${eventItem?.date ? ` on ${formatDisplayDate(eventItem.date)}` : ""}${eventItem?.opponent ? ` vs ${eventItem.opponent}` : ""}.`,
+    url: "/#home",
+    tag: `sub-reminder-${request.id}-${Date.now()}`
+  });
+  const expired = new Set();
+  await Promise.all(subscriptions.map(async (saved) => {
+    try {
+      await webPush.sendNotification(saved.subscription, payload);
+    } catch (error) {
+      if (error.statusCode === 404 || error.statusCode === 410) expired.add(saved.id);
+      else console.error("Sub reminder push notification failed:", error.message || error);
+    }
+  }));
+  if (expired.size) {
+    data.pushSubscriptions = data.pushSubscriptions.filter((subscription) => !expired.has(subscription.id));
+    await saveData(data);
+  }
+}
+
+async function sendSubConfirmedNotifications(data, request, response, eventItem) {
+  if (!pushConfigured() || !data.pushSubscriptions.length) return;
+  const subscriptions = data.pushSubscriptions.filter((saved) => normalizePushPreferences(saved.preferences).subAlerts);
+  if (!subscriptions.length) return;
+  const payload = JSON.stringify({
+    title: "3FDP sub confirmed",
+    body: `Confirmed: ${response.bowlerName || response.username} will bowl for ${request.requestedFor || request.requestedBy}${eventItem?.date ? ` on ${formatDisplayDate(eventItem.date)}` : ""}.`,
+    url: "/#calendar",
+    tag: `sub-confirmed-${request.id}-${response.userId}`
+  });
+  const expired = new Set();
+  await Promise.all(subscriptions.map(async (saved) => {
+    try {
+      await webPush.sendNotification(saved.subscription, payload);
+    } catch (error) {
+      if (error.statusCode === 404 || error.statusCode === 410) expired.add(saved.id);
+      else console.error("Sub confirmed push notification failed:", error.message || error);
+    }
+  }));
+  if (expired.size) {
+    data.pushSubscriptions = data.pushSubscriptions.filter((subscription) => !expired.has(subscription.id));
+    await saveData(data);
+  }
+}
+
 async function sendBlogNotification(data, actorUserId, payload) {
   if (!pushConfigured() || !data.pushSubscriptions.length) return;
   const subscriptions = data.pushSubscriptions.filter((saved) => saved.userId !== actorUserId && normalizePushPreferences(saved.preferences).blogAlerts);
@@ -994,6 +1128,7 @@ exports.handler = async (event) => {
       const recapName = String(body.recapName || "").trim();
       if (recapName.length > 80) return json(400, { error: "Recap sheet name is too long." });
       user.recapName = recapName;
+      user.bowlerType = normalizeBowlerType(body.bowlerType || user.bowlerType);
       await saveData(data);
       return json(200, { user: publicUser(user) });
     }
@@ -1002,14 +1137,17 @@ exports.handler = async (event) => {
       const body = parseBody(event);
       const email = String(body.email || "").trim().toLowerCase();
       const username = String(body.username || "").trim();
+      const recapName = String(body.recapName || "").trim();
+      const bowlerType = normalizeBowlerType(body.bowlerType);
       const password = String(body.password || "");
       const isFirstUser = data.users.length === 0;
       const setupCode = String(body.setupCode || "");
       if (!email.includes("@") || username.length < 2 || password.length < 8) return json(400, { error: "Use a valid email, username, and password." });
+      if (recapName.length > 80) return json(400, { error: "Recap sheet name is too long." });
       if (isFirstUser && process.env.ADMIN_SETUP_CODE && setupCode !== process.env.ADMIN_SETUP_CODE) return json(403, { error: "Admin setup code is required." });
       if (data.users.some((user) => user.email === email || user.username.toLowerCase() === username.toLowerCase())) return json(409, { error: "That email or username is already registered." });
       const { salt, hash } = hashPassword(password);
-      const newUser = { id: crypto.randomUUID(), email, username, passwordSalt: salt, passwordHash: hash, role: isFirstUser ? "admin" : "user", createdAt: new Date().toISOString() };
+      const newUser = { id: crypto.randomUUID(), email, username, recapName, bowlerType, passwordSalt: salt, passwordHash: hash, role: isFirstUser ? "admin" : "user", createdAt: new Date().toISOString() };
       data.users.push(newUser);
       data.notes.push({
         id: crypto.randomUUID(),
@@ -1026,7 +1164,10 @@ exports.handler = async (event) => {
         body: `${newUser.username} joined the team site.`,
         tag: `user-joined-${newUser.id}`
       });
-      return json(201, { ok: true });
+      const token = sign({ userId: newUser.id, issuedAt: Date.now() });
+      return json(201, { ok: true, user: publicUser(newUser) }, {
+        "Set-Cookie": `session=${encodeURIComponent(token)}; HttpOnly; SameSite=Lax; Path=/; Max-Age=604800`
+      });
     }
 
     if (method === "GET" && route === "/bootstrap") {
@@ -1035,7 +1176,8 @@ exports.handler = async (event) => {
         config: data.config,
         schedule: buildSchedule(data),
         notes: sortedNotes(data),
-        events: data.calendarEvents,
+        events: visibleCalendarEvents(data),
+        regularLineup: regularBowlerNames(data),
         subRequests: visibleSubRequests(data)
       });
     }
@@ -1114,10 +1256,11 @@ exports.handler = async (event) => {
       const email = String(body.email || "").trim().toLowerCase();
       const username = String(body.username || "").trim();
       const password = String(body.password || DEFAULT_TEMP_PASSWORD);
+      const bowlerType = normalizeBowlerType(body.bowlerType);
       if (!email.includes("@") || username.length < 2 || password.length < 8) return json(400, { error: "Use a valid email, username, and temporary password." });
       if (data.users.some((user) => user.email === email || user.username.toLowerCase() === username.toLowerCase())) return json(409, { error: "That account already exists." });
       const { salt, hash } = hashPassword(password);
-      data.users.push({ id: crypto.randomUUID(), email, username, passwordSalt: salt, passwordHash: hash, passwordSetupRequired: true, role: "user", createdAt: new Date().toISOString() });
+      data.users.push({ id: crypto.randomUUID(), email, username, bowlerType, passwordSalt: salt, passwordHash: hash, passwordSetupRequired: true, role: "user", createdAt: new Date().toISOString() });
       await saveData(data);
       return json(201, { ok: true });
     }
@@ -1131,6 +1274,7 @@ exports.handler = async (event) => {
       const email = String(body.email || "").trim().toLowerCase();
       const username = String(body.username || "").trim();
       const recapName = String(body.recapName || "").trim();
+      const bowlerType = normalizeBowlerType(body.bowlerType || target.bowlerType);
       const role = String(body.role || target.role || "user").trim();
       if (!email.includes("@") || username.length < 2) return json(400, { error: "Use a valid email and username." });
       if (recapName.length > 80) return json(400, { error: "Recap sheet name is too long." });
@@ -1142,6 +1286,7 @@ exports.handler = async (event) => {
       target.email = email;
       target.username = username;
       target.recapName = recapName;
+      target.bowlerType = bowlerType;
       target.role = role;
       target.updatedAt = new Date().toISOString();
       data.pushSubscriptions.forEach((subscription) => {
@@ -1265,6 +1410,30 @@ exports.handler = async (event) => {
       return json(200, { notes: sortedNotes(data) });
     }
 
+    if (method === "POST" && /^\/notes\/[^/]+\/comments\/[^/]+\/reactions$/.test(route)) {
+      const user = requireUser(event, data);
+      const [, , noteId, , commentId] = route.split("/");
+      const note = findNote(data, decodeURIComponent(noteId));
+      const comment = findNoteComment(note, decodeURIComponent(commentId));
+      const reaction = normalizeReaction(parseBody(event).reaction);
+      if (!note || !comment) return json(404, { error: "Reply not found." });
+      if (!reaction) return json(400, { error: "Choose a valid reaction." });
+      toggleReaction(comment, user, reaction);
+      await saveData(data);
+      return json(200, { notes: sortedNotes(data) });
+    }
+
+    if (method === "POST" && /^\/notes\/[^/]+\/reactions$/.test(route)) {
+      const user = requireUser(event, data);
+      const note = findNote(data, decodeURIComponent(route.split("/")[2]));
+      const reaction = normalizeReaction(parseBody(event).reaction);
+      if (!note) return json(404, { error: "Blog entry not found." });
+      if (!reaction) return json(400, { error: "Choose a valid reaction." });
+      toggleReaction(note, user, reaction);
+      await saveData(data);
+      return json(200, { notes: sortedNotes(data) });
+    }
+
     if (method === "GET" && route === "/chat/messages") {
       requireUser(event, data);
       if (pruneExpiredChatImages(data)) await saveData(data);
@@ -1286,7 +1455,19 @@ exports.handler = async (event) => {
       return json(201, { messages: sortedChatMessages(data), message });
     }
 
-    if (method === "GET" && route === "/calendar/events") return json(200, { events: data.calendarEvents });
+    if (method === "POST" && /^\/chat\/messages\/[^/]+\/reactions$/.test(route)) {
+      const user = requireUser(event, data);
+      const messageId = decodeURIComponent(route.split("/")[3]);
+      const message = (data.chatMessages || []).find((candidate) => candidate.id === messageId);
+      const reaction = normalizeReaction(parseBody(event).reaction);
+      if (!message) return json(404, { error: "Chat message not found." });
+      if (!reaction) return json(400, { error: "Choose a valid reaction." });
+      toggleReaction(message, user, reaction);
+      await saveData(data);
+      return json(200, { messages: sortedChatMessages(data) });
+    }
+
+    if (method === "GET" && route === "/calendar/events") return json(200, { events: visibleCalendarEvents(data) });
 
     if (method === "POST" && route === "/calendar/events") {
       requireAdmin(event, data);
@@ -1321,7 +1502,7 @@ exports.handler = async (event) => {
       }
       await saveData(data);
       return json(200, {
-        events: data.calendarEvents,
+        events: visibleCalendarEvents(data),
         importId: importedCount ? importId : "",
         savedEventIds,
         importedCount,
@@ -1348,7 +1529,7 @@ exports.handler = async (event) => {
       data.subRequests = data.subRequests.filter((request) => !removedEventIds.has(request.eventId));
       await saveData(data);
       return json(200, {
-        events: data.calendarEvents,
+        events: visibleCalendarEvents(data),
         subRequests: visibleSubRequests(data),
         removedCount: removedEventIds.size,
         invalidCount
@@ -1364,7 +1545,7 @@ exports.handler = async (event) => {
       data.subRequests = data.subRequests.filter((request) => !removedEventIds.has(request.eventId));
       await saveData(data);
       return json(200, {
-        events: data.calendarEvents,
+        events: visibleCalendarEvents(data),
         subRequests: visibleSubRequests(data),
         removedCount: removedEventIds.size
       });
@@ -1380,7 +1561,7 @@ exports.handler = async (event) => {
       data.calendarEvents = data.calendarEvents.filter((eventItem) => !removedEventIds.has(eventItem.id));
       data.subRequests = data.subRequests.filter((request) => !removedEventIds.has(request.eventId));
       await saveData(data);
-      return json(200, { events: data.calendarEvents, subRequests: visibleSubRequests(data), removedCount: removedEventIds.size });
+      return json(200, { events: visibleCalendarEvents(data), subRequests: visibleSubRequests(data), removedCount: removedEventIds.size });
     }
 
     if (method === "POST" && route === "/sub-requests") {
@@ -1393,6 +1574,7 @@ exports.handler = async (event) => {
       if (existing) {
         existing.requestedByUserId = user.id;
         existing.requestedBy = user.username;
+        existing.requestedFor = userBowlerName(user);
         existing.note = String(body.note || "");
         existing.status = "open";
         existing.updatedAt = new Date().toISOString();
@@ -1405,6 +1587,7 @@ exports.handler = async (event) => {
         eventId,
         requestedByUserId: user.id,
         requestedBy: user.username,
+        requestedFor: userBowlerName(user),
         note: String(body.note || ""),
         responses: [],
         status: "open",
@@ -1420,18 +1603,28 @@ exports.handler = async (event) => {
       const user = requireUser(event, data);
       const request = findSubRequest(data, decodeURIComponent(route.split("/")[2]));
       if (!request) return json(404, { error: "Sub request not found." });
+      const eventItem = data.calendarEvents.find((candidate) => candidate.id === request.eventId) || null;
       const response = String(parseBody(event).response || "");
+      if (!["can", "maybe", "cant"].includes(response)) return json(400, { error: "Choose a valid response." });
       const previousResponse = request.responses.find((item) => item.userId === user.id)?.response || "";
       request.responses = request.responses.filter((item) => item.userId !== user.id);
-      request.responses.push({ userId: user.id, username: user.username, response, createdAt: new Date().toISOString() });
+      const responseEntry = { userId: user.id, username: user.username, bowlerName: userBowlerName(user), response, createdAt: new Date().toISOString() };
+      request.responses.push(responseEntry);
+      if (response === "can") {
+        request.confirmedSubUserId = user.id;
+        request.confirmedSubName = responseEntry.bowlerName || responseEntry.username;
+        request.status = "confirmed";
+        request.confirmedAt = new Date().toISOString();
+      }
       const subConfirmationNote = response === "can" && previousResponse !== "can"
         ? addSubConfirmationNote(data, user, request)
         : null;
       await saveData(data);
       if (subConfirmationNote) {
+        await sendSubConfirmedNotifications(data, request, responseEntry, eventItem);
         await sendBlogNotification(data, user.id, {
           title: "3FDP sub confirmed",
-          body: `${user.username} can sub for ${request.requestedBy}.`,
+          body: `Confirmed: ${responseEntry.bowlerName || responseEntry.username} will bowl for ${request.requestedFor || request.requestedBy}.`,
           tag: `sub-confirm-${request.id}-${user.id}`
         });
       }
@@ -1446,6 +1639,19 @@ exports.handler = async (event) => {
       request.note = String(parseBody(event).note || "");
       request.updatedAt = new Date().toISOString();
       await saveData(data);
+      return json(200, { subRequests: visibleSubRequests(data) });
+    }
+
+    if (method === "POST" && /^\/sub-requests\/[^/]+\/resend$/.test(route)) {
+      const user = requireUser(event, data);
+      const request = findSubRequest(data, decodeURIComponent(route.split("/")[2]));
+      if (!request) return json(404, { error: "Sub request not found." });
+      if (request.requestedByUserId !== user.id && user.role !== "admin") return json(403, { error: "Only the request owner or admin can resend this sub request." });
+      if (confirmedSubResponse(request)) return json(400, { error: "A sub is already confirmed." });
+      const eventItem = data.calendarEvents.find((candidate) => candidate.id === request.eventId) || null;
+      request.lastReminderAt = new Date().toISOString();
+      await saveData(data);
+      await sendSubReminderNotifications(data, request, eventItem);
       return json(200, { subRequests: visibleSubRequests(data) });
     }
 

@@ -439,25 +439,89 @@ textarea:-webkit-autofill {
   border-top: 1px solid var(--line);
 }
 
+.comments summary {
+  color: var(--muted);
+  font-weight: 850;
+  cursor: pointer;
+}
+
+.comment-list {
+  display: grid;
+  gap: 0.45rem;
+}
+
 .comment-item {
-  padding: 0.65rem;
+  padding: 0.48rem 0.55rem;
   background: #f7f7f7;
   border: 1px solid var(--line);
   border-radius: 8px;
 }
 
+.comment-item .feed-heading {
+  gap: 0.45rem;
+}
+
+.comment-item strong {
+  font-size: 0.9rem;
+}
+
 .comment-item p {
-  margin: 0.3rem 0;
+  margin: 0.2rem 0;
+  font-size: 0.92rem;
 }
 
 .comment-item span {
   color: var(--muted);
-  font-size: 0.78rem;
+  font-size: 0.72rem;
+}
+
+.comment-item .note-actions {
+  display: flex;
+  flex-wrap: nowrap;
+  gap: 0.25rem;
+}
+
+.comment-item .note-actions .small {
+  min-height: 1.9rem;
+  padding: 0.28rem 0.48rem;
+  font-size: 0.68rem;
 }
 
 .comment-form {
   display: grid;
   gap: 0.55rem;
+}
+
+.reaction-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.28rem;
+  margin-top: 0.35rem;
+}
+
+.reaction-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.22rem;
+  min-width: 2.2rem;
+  min-height: 2rem;
+  padding: 0.25rem 0.42rem;
+  color: var(--text);
+  background: #f1f1f1;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  font-size: 0.82rem;
+  line-height: 1;
+}
+
+.reaction-button:hover,
+.reaction-button.is-active {
+  background: #ffe0c0;
+  border-color: rgba(244, 123, 32, 0.55);
+}
+
+.reaction-button b {
+  font-size: 0.72rem;
 }
 
 .inline-edit-form {
@@ -586,6 +650,16 @@ textarea:-webkit-autofill {
   background: var(--accent);
   border-color: var(--accent-dark);
   box-shadow: inset 0 0 0 1px var(--accent-dark);
+}
+
+.calendar-event.is-sub-pending {
+  color: white;
+  background: #b42318;
+  border-color: #8f1c13;
+}
+
+.calendar-event.is-sub-pending span {
+  color: white;
 }
 
 .calendar-event.is-selected span {
@@ -1091,7 +1165,14 @@ td .muted { display: block; margin-top: 0.2rem; font-size: 0.8rem; }
   }
   .section-heading { display: grid; }
   .feed-heading { display: grid; }
+  .comment-item .feed-heading {
+    display: flex;
+    align-items: start;
+  }
   .note-actions { justify-content: stretch; }
+  .comment-item .note-actions {
+    justify-content: end;
+  }
   .row-actions { display: grid; }
   .settings-row { grid-template-columns: 1fr; }
   .app-header { grid-template-columns: auto minmax(0, 1fr) auto; }

@@ -243,6 +243,25 @@ button:hover { background: var(--accent-dark); }
   background: var(--soft-gray);
 }
 
+.menu-user-summary {
+  display: grid;
+  gap: 0.16rem;
+  padding: 0.55rem 0.6rem 0.7rem;
+  border-bottom: 1px solid var(--line);
+}
+
+.menu-user-summary span,
+.menu-user-summary em {
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-style: normal;
+}
+
+.menu-user-summary strong {
+  overflow-wrap: anywhere;
+  font-size: 1rem;
+}
+
 h1, h2, h3 { margin: 0; line-height: 1.08; }
 h1 { font-size: clamp(1.35rem, 6vw, 2.5rem); text-transform: uppercase; }
 h2 { font-size: clamp(1.35rem, 5vw, 2rem); }
@@ -275,6 +294,17 @@ main {
 }
 
 .muted, .hint { color: var(--muted); }
+
+.mention-text {
+  display: inline;
+  color: #a94700;
+  background: #fff0df;
+  border: 1px solid rgba(244, 123, 32, 0.28);
+  border-radius: 999px;
+  padding: 0.02rem 0.28rem;
+  font-weight: 900;
+  white-space: nowrap;
+}
 
 .form { display: grid; gap: 0.85rem; margin-top: 0.9rem; min-width: 0; }
 .inline-form { grid-template-columns: repeat(auto-fit, minmax(min(160px, 100%), 1fr)); align-items: end; }
@@ -312,15 +342,48 @@ main {
   min-width: 0;
 }
 
+.roster-summary-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 0.45rem;
+  align-items: end;
+}
+
+.roster-summary-row > div {
+  display: grid;
+  gap: 0.18rem;
+  min-width: 0;
+}
+
 .roster-editor strong {
   color: var(--muted);
   font-size: 0.76rem;
+}
+
+.roster-editor .muted {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.78rem;
+}
+
+.roster-panel {
+  display: grid;
+  gap: 0.5rem;
+  padding: 0.58rem;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #f8f8f8;
 }
 
 .roster-list {
   display: flex;
   flex-wrap: wrap;
   gap: 0.28rem;
+}
+
+.roster-actions {
+  justify-content: start;
 }
 
 .roster-chip {
@@ -443,6 +506,10 @@ textarea:-webkit-autofill {
 }
 
 .section-heading > * { min-width: 0; }
+
+.compact-heading {
+  margin-bottom: 0;
+}
 
 .score-filter-heading {
   justify-content: flex-end;
@@ -778,12 +845,66 @@ textarea:-webkit-autofill {
   margin-top: 0.7rem;
 }
 
+.arsenal-editor {
+  display: grid;
+  gap: 0.65rem;
+  padding: 0.75rem;
+  background: #f7f7f7;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+
+.arsenal-list {
+  display: grid;
+  gap: 0.65rem;
+}
+
+.arsenal-card {
+  display: grid;
+  gap: 0.58rem;
+  padding: 0.68rem;
+  background: white;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+
+.arsenal-card-heading {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.6rem;
+  align-items: center;
+}
+
+.arsenal-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.52rem;
+}
+
 .row-actions {
   display: flex;
   flex-wrap: wrap;
   gap: 0.4rem;
   align-items: center;
   min-width: 0;
+}
+
+.text-button {
+  width: auto;
+  min-height: 0;
+  padding: 0;
+  color: #a94700;
+  background: transparent;
+  border: 0;
+  font: inherit;
+  font-weight: 900;
+  text-align: left;
+  text-decoration: underline;
+  text-underline-offset: 0.16rem;
+}
+
+.text-button:hover {
+  color: var(--accent);
 }
 
 .segmented {
@@ -841,6 +962,14 @@ td .muted { display: block; margin-top: 0.2rem; font-size: 0.8rem; }
 .score-table-wrap td {
   padding: 0.68rem 0.45rem;
   font-size: 0.84rem;
+}
+
+.bowler-detail-panel {
+  display: grid;
+  gap: 0.7rem;
+  margin-top: 0.85rem;
+  padding-top: 0.85rem;
+  border-top: 1px solid var(--line);
 }
 
 .action-status {
@@ -1136,6 +1265,18 @@ td .muted { display: block; margin-top: 0.2rem; font-size: 0.8rem; }
   border-color: rgba(244, 123, 32, 0.4);
 }
 
+.chat-message.is-highlighted {
+  border-color: rgba(244, 123, 32, 0.9);
+  box-shadow: 0 0 0 3px rgba(244, 123, 32, 0.22);
+}
+
+.chat-delete-hint {
+  justify-self: end;
+  color: var(--muted);
+  font-size: 0.66rem;
+  font-weight: 800;
+}
+
 .chat-message strong {
   font-size: 0.82rem;
 }
@@ -1268,6 +1409,12 @@ td .muted { display: block; margin-top: 0.2rem; font-size: 0.8rem; }
   }
   .row-actions { display: grid; }
   .settings-row { grid-template-columns: 1fr; }
+  .arsenal-grid {
+    grid-template-columns: 1fr;
+  }
+  .arsenal-card {
+    padding: 0.58rem;
+  }
   .app-header { grid-template-columns: auto minmax(0, 1fr) auto; }
   .icon-button {
     width: 38px;

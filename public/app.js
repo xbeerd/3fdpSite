@@ -34,6 +34,8 @@ const state = {
   scoreHandicapTotals: { our: [0, 0, 0], opponent: [0, 0, 0] },
   scoreGameTotals: { our: [0, 0, 0], opponent: [0, 0, 0] },
   selectedScoreWeek: "",
+  selectedScoreLeague: "",
+  selectedScoreBowler: "",
   prizePot: Number(localStorage.getItem("prizePot") || 0),
   calendarCursor: new Date().toISOString().slice(0, 7),
   selectedCalendarEventId: null,
@@ -53,6 +55,14 @@ function escapeHtml(value) {
     '"': "&quot;",
     "'": "&#39;"
   }[character]));
+}
+
+function formatMentionText(value) {
+  return escapeHtml(value).replace(/(^|[\s(])(@[a-z0-9][a-z0-9._ -]{0,60})/gi, (match, prefix, mention) => {
+    const trimmedMention = mention.replace(/\s+$/g, "");
+    const trailing = mention.slice(trimmedMention.length);
+    return `${prefix}<span class="mention-text">${trimmedMention}</span>${trailing}`;
+  });
 }
 
 function toast(message) {
@@ -131,21 +141,52 @@ function showCalendarEvent(eventId) {
 }
 
 async function openViewFromHash() {
-  const view = viewFromHash();
+  const { view, params } = routeFromHash();
   if (!view) return;
   if (state.user) await refreshBootstrap();
   setView(view);
+  await applyRouteParams(params);
 }
 
 function viewFromHash() {
+  return routeFromHash().view;
+}
+
+function routeFromHash() {
   const value = window.location.hash.replace("#", "");
-  return ["home", "calendar", "scores", "loser", "options", "admin"].includes(value) ? value : "";
+  const [view, query = ""] = value.split("?");
+  return {
+    view: ["home", "calendar", "scores", "loser", "options", "admin"].includes(view) ? view : "",
+    params: new URLSearchParams(query)
+  };
+}
+
+async function applyRouteParams(params) {
+  const chatMessageId = params.get("chat");
+  if (chatMessageId) {
+    await showChatMessage(chatMessageId);
+  }
+}
+
+async function showChatMessage(messageId) {
+  state.chatOpen = true;
+  renderChat();
+  await refreshChatMessages().catch((error) => toast(error.message));
+  const node = document.querySelector(`[data-chat-message="${CSS.escape(messageId)}"]`);
+  if (!node) return toast("Chat message not found.");
+  node.classList.add("is-highlighted");
+  node.scrollIntoView({ behavior: "smooth", block: "center" });
+  markChatNotificationsSeen();
+  state.notifications = buildNotifications();
+  renderNotifications();
+  setTimeout(() => node.classList.remove("is-highlighted"), 3200);
 }
 
 function renderShell() {
   const needsSetup = Boolean(state.user?.passwordSetupRequired);
   $$(".user-only").forEach((node) => node.classList.toggle("hidden", !state.user));
   $$(".admin-only").forEach((node) => node.classList.toggle("hidden", state.user?.role !== "admin"));
+  renderMenuUserSummary();
   $("#menuAuthBtn").textContent = state.user ? "Log out" : "Login";
   $("#adminSetupCodeField").classList.toggle("hidden", !state.adminSetupOpen);
   if (!state.user) setView("login");
@@ -153,6 +194,24 @@ function renderShell() {
   else setView(state.view === "login" || state.view === "passwordSetup" ? "home" : state.view);
   renderChat();
   renderNotifications();
+}
+
+function renderMenuUserSummary() {
+  const node = $("#menuUserSummary");
+  if (!node) return;
+  node.classList.toggle("hidden", !state.user);
+  if (!state.user) {
+    node.innerHTML = "";
+    return;
+  }
+  const recapName = String(state.user.recapName || "").trim();
+  const username = String(state.user.username || "").trim();
+  const secondary = recapName && recapName.toLowerCase() !== username.toLowerCase() ? `Recap: ${recapName}` : state.user.role || "";
+  node.innerHTML = `
+    <span>Signed in as</span>
+    <strong>${escapeHtml(username || "User")}</strong>
+    ${secondary ? `<em>${escapeHtml(secondary)}</em>` : ""}
+  `;
 }
 
 function showRegisterForm(show) {
@@ -334,15 +393,6 @@ function selectedCalendarEvent() {
 
 function currentUserBowlerName() {
   return String(state.user?.recapName || state.user?.username || "").trim();
-}
-
-function isSummerSweeperEvent(eventItem) {
-  return /summer\s*sweeper/i.test([
-    eventItem?.title,
-    eventItem?.leagueName,
-    eventItem?.opponent,
-    eventItem?.details
-  ].filter(Boolean).join(" "));
 }
 
 function eventLineupHasCurrentUser(eventItem) {
@@ -602,6 +652,47 @@ function renderProfileOptions() {
   if (!form || !state.user) return;
   form.elements.recapName.value = state.user.recapName || "";
   form.elements.bowlerType.value = state.user.bowlerType || "regular";
+  renderArsenalEditor(state.user.arsenal || []);
+}
+
+function emptyArsenalBall() {
+  return { ball: "", weight: "", speed: "", rpm: "", notes: "" };
+}
+
+function renderArsenalEditor(arsenal = []) {
+  const list = $("#arsenalList");
+  if (!list) return;
+  const rows = arsenal.length ? arsenal.slice(0, 10) : [emptyArsenalBall()];
+  list.innerHTML = rows.map((item, index) => `
+    <article class="arsenal-card" data-arsenal-index="${index}">
+      <div class="arsenal-card-heading">
+        <strong>Ball ${index + 1}</strong>
+        <button class="small danger" type="button" data-remove-arsenal="${index}">Remove</button>
+      </div>
+      <label>Ball <input name="arsenalBall" type="text" maxlength="80" value="${escapeHtml(item.ball || "")}" placeholder="Ball name"></label>
+      <div class="arsenal-grid">
+        <label>Weight <input name="arsenalWeight" type="text" maxlength="20" value="${escapeHtml(item.weight || "")}" placeholder="15 lb"></label>
+        <label>Typical speed <input name="arsenalSpeed" type="text" maxlength="40" value="${escapeHtml(item.speed || "")}" placeholder="16.5 mph"></label>
+        <label>Typical RPM <input name="arsenalRpm" type="text" maxlength="40" value="${escapeHtml(item.rpm || "")}" placeholder="350 rpm"></label>
+      </div>
+      <label>Delivery notes <textarea name="arsenalNotes" rows="3" maxlength="600" placeholder="Pin position, drilling info, starting spot, target, release notes">${escapeHtml(item.notes || "")}</textarea></label>
+    </article>
+  `).join("");
+  $("#addArsenalBall")?.classList.toggle("hidden", rows.length >= 10);
+}
+
+function readArsenalEditor() {
+  return readArsenalCards().filter((item) => item.ball || item.weight || item.speed || item.rpm || item.notes).slice(0, 10);
+}
+
+function readArsenalCards() {
+  return $$("#arsenalList .arsenal-card").map((card) => ({
+    ball: card.querySelector("[name='arsenalBall']")?.value.trim() || "",
+    weight: card.querySelector("[name='arsenalWeight']")?.value.trim() || "",
+    speed: card.querySelector("[name='arsenalSpeed']")?.value.trim() || "",
+    rpm: card.querySelector("[name='arsenalRpm']")?.value.trim() || "",
+    notes: card.querySelector("[name='arsenalNotes']")?.value.trim() || ""
+  })).slice(0, 10);
 }
 
 async function pushRegistration() {
@@ -768,14 +859,15 @@ function renderChat(options = {}) {
   $("#chatToggle").setAttribute("aria-expanded", String(state.chatOpen));
   messages.innerHTML = state.chatMessages.length
     ? state.chatMessages.map((message) => `
-      <article class="chat-message ${message.userId === state.user?.id ? "is-mine" : ""}">
+      <article class="chat-message ${message.userId === state.user?.id ? "is-mine" : ""}" data-chat-message="${escapeHtml(message.id)}" ${message.userId === state.user?.id ? 'data-chat-owned="true" title="Press and hold to delete"' : ""}>
         <div>
           <strong>${escapeHtml(message.username)}</strong>
           <span>${formatDateTime(message.createdAt)}</span>
         </div>
-        ${message.text ? `<p>${escapeHtml(message.text)}</p>` : ""}
+        ${message.text ? `<p>${formatMentionText(message.text)}</p>` : ""}
         ${message.imageDataUrl ? `<button class="chat-photo-thumb" type="button" data-chat-image="${escapeHtml(message.id)}"><img src="${message.imageDataUrl}" alt="Chat photo from ${escapeHtml(message.username)}"></button>` : ""}
         ${message.imageExpiredAt ? `<p class="muted">Photo expired.</p>` : ""}
+        ${message.userId === state.user?.id ? `<span class="chat-delete-hint">Hold to delete</span>` : ""}
         ${renderReactionControls(message, "chat", message.id)}
       </article>
     `).join("")
@@ -801,6 +893,27 @@ function openChatImage(messageId) {
   if (!message?.imageDataUrl) return;
   $("#chatImageFull").src = message.imageDataUrl;
   $("#chatImageDialog").showModal();
+}
+
+async function deleteChatMessage(messageId) {
+  const message = state.chatMessages.find((item) => item.id === messageId);
+  if (!message) return toast("Chat message not found.");
+  if (message.userId !== state.user?.id && state.user?.role !== "admin") return toast("You can only delete your own chat messages.");
+  if (!confirm("Delete this chat message?")) return;
+  const previousMessages = [...state.chatMessages];
+  state.chatMessages = state.chatMessages.filter((item) => item.id !== messageId);
+  renderChat();
+  try {
+    const data = await api(`/api/chat/messages/${encodeURIComponent(messageId)}`, { method: "DELETE" });
+    state.chatMessages = data.messages || state.chatMessages;
+    renderChat();
+    await refreshNotifications();
+    toast("Chat message deleted.");
+  } catch (error) {
+    state.chatMessages = previousMessages;
+    renderChat();
+    toast(error.message);
+  }
 }
 
 async function toggleReaction(type, target, reaction) {
@@ -900,7 +1013,7 @@ function renderNote(note) {
           </div>
           ${commentControls}
         </div>
-        <p class="comment-text">${escapeHtml(comment.text)}</p>
+        <p class="comment-text">${formatMentionText(comment.text)}</p>
         ${renderReactionControls(comment, "comment", `${note.id}:${comment.id}`)}
       </article>
     `;
@@ -916,7 +1029,7 @@ function renderNote(note) {
         </div>
         ${noteControls}
       </div>
-      ${note.text ? `<p class="note-text">${escapeHtml(note.text)}</p>` : ""}
+      ${note.text ? `<p class="note-text">${formatMentionText(note.text)}</p>` : ""}
       ${note.photoDataUrl ? `<img class="note-photo" src="${note.photoDataUrl}" alt="Blog post image">` : ""}
       ${renderReactionControls(note, "note", note.id)}
       <details class="comments">
@@ -997,6 +1110,7 @@ function resetCalendarEventForm() {
   $("#cancelEventEdit")?.classList.add("hidden");
   renderEventRosterOptions();
   updateEventLineupField();
+  closeRosterEditor();
 }
 
 function parseLineupText(value) {
@@ -1043,14 +1157,46 @@ function renderEventRosterOptions(selectedLineup = null) {
       `;
     }).join("")
     : `<p class="hint">No users loaded yet. Use custom entries for now.</p>`;
+  renderEventRosterSummary();
+}
+
+function selectedRosterDraftNames() {
+  const form = $("#quickEventForm");
+  if (!form) return [];
+  const checkedNames = $$("#eventRosterList input[type='checkbox']:checked").map((input) => input.value);
+  const customNames = parseLineupText(form.elements.customLineup?.value || "");
+  return [...checkedNames, ...customNames];
 }
 
 function updateEventLineupField() {
   const form = $("#quickEventForm");
   if (!form?.elements.lineup) return;
-  const checkedNames = $$("#eventRosterList input[type='checkbox']:checked").map((input) => input.value);
-  const customNames = parseLineupText(form.elements.customLineup?.value || "");
-  form.elements.lineup.value = [...checkedNames, ...customNames].join(", ");
+  form.elements.lineup.value = selectedRosterDraftNames().join(", ");
+  renderEventRosterSummary();
+}
+
+function renderEventRosterSummary() {
+  const form = $("#quickEventForm");
+  const summary = $("#eventRosterSummary");
+  if (!form || !summary) return;
+  const names = parseLineupText(form.elements.lineup?.value || "");
+  summary.textContent = names.length ? names.join(", ") : "No bowlers selected.";
+}
+
+function openRosterEditor() {
+  renderEventRosterOptions(parseLineupText($("#quickEventForm")?.elements.lineup?.value || ""));
+  $("#eventRosterPanel")?.classList.remove("hidden");
+  $("#openRosterEditor")?.classList.add("hidden");
+}
+
+function closeRosterEditor() {
+  $("#eventRosterPanel")?.classList.add("hidden");
+  $("#openRosterEditor")?.classList.remove("hidden");
+}
+
+function cancelRosterEditor() {
+  renderEventRosterOptions(parseLineupText($("#quickEventForm")?.elements.lineup?.value || ""));
+  closeRosterEditor();
 }
 
 function editCalendarEvent(eventId) {
@@ -1071,6 +1217,7 @@ function editCalendarEvent(eventId) {
   if (form.elements.customLineup) form.elements.customLineup.value = customLineup.join(", ");
   renderEventRosterOptions(lineup);
   updateEventLineupField();
+  closeRosterEditor();
   form.elements.startTime.value = eventItem.startTime || "";
   form.elements.practiceTime.value = eventItem.practiceTime || "";
   form.querySelector("button[type='submit']").textContent = "Save event";
@@ -1085,7 +1232,7 @@ function renderSelectedCalendarEvent() {
   const request = state.subRequests.find((item) => item.eventId === eventItem.id);
   const recap = scoreRecapForDate(eventItem.date);
   const lineup = eventItem.lineup?.length ? eventItem.lineup : state.regularLineup;
-  const canSelfAdd = state.user && isSummerSweeperEvent(eventItem) && !eventLineupHasCurrentUser(eventItem);
+  const canSelfAdd = state.user && !eventLineupHasCurrentUser(eventItem);
   const adminControls = state.user?.role === "admin"
     ? `
       <button class="small ghost" type="button" data-edit-event="${eventItem.id}">Edit event</button>
@@ -1448,6 +1595,7 @@ function showScoreForm(recap = null) {
   state.editingScoreRecapId = recap?.id || "";
   form.elements.date.value = recap?.date || todayYmd();
   form.elements.week.value = recap?.week || "";
+  form.elements.eventName.value = recap?.eventName || recapLeagueLabel(recap || { date: form.elements.date.value }) || "";
   form.elements.ourTeamName.value = recap?.ourTeamName || "3 Finger Death Punch";
   form.elements.opponentTeamName.value = recap?.opponentTeamName || "";
   form.elements.notes.value = recap?.notes || "";
@@ -1510,6 +1658,68 @@ function applyScoreDashboard(data) {
   state.totalPaidGames = data.totalPaidGames || 0;
 }
 
+function recapCalendarEvent(recap) {
+  return state.events.find((eventItem) => eventItem.id === recap.eventId)
+    || state.events.find((eventItem) => eventItem.date === recap.date)
+    || null;
+}
+
+function recapLeagueLabel(recap) {
+  const eventItem = recapCalendarEvent(recap);
+  return String(recap.eventName || recap.leagueName || eventItem?.leagueName || eventItem?.title || "Unassigned event").trim();
+}
+
+function filteredScoreRecapsForBowlerLog() {
+  return state.selectedScoreLeague
+    ? state.scoreRecaps.filter((recap) => recapLeagueLabel(recap) === state.selectedScoreLeague)
+    : state.scoreRecaps;
+}
+
+function lineSeries(line) {
+  return Number(line.game1 || 0) + Number(line.game2 || 0) + Number(line.game3 || 0);
+}
+
+function buildBowlerStatsFromRecaps(recaps) {
+  const map = new Map();
+  for (const recap of recaps) {
+    for (const line of recap.ourTeamLines || []) {
+      const key = String(line.bowlerName || "").trim().toLowerCase();
+      if (!key) continue;
+      const current = map.get(key) || {
+        bowlerName: line.bowlerName,
+        games: 0,
+        pins: 0,
+        highGame: 0,
+        highSeries: 0,
+        handicapOverride: undefined
+      };
+      const series = lineSeries(line);
+      current.games += 3;
+      current.pins += series;
+      current.highGame = Math.max(current.highGame, Number(line.game1 || 0), Number(line.game2 || 0), Number(line.game3 || 0));
+      current.highSeries = Math.max(current.highSeries, series);
+      if (line.handicapOverride !== null && line.handicapOverride !== undefined) current.handicapOverride = line.handicapOverride;
+      map.set(key, current);
+    }
+  }
+  return [...map.values()].map((bowler) => {
+    const average = bowler.games ? Number((bowler.pins / bowler.games).toFixed(2)) : null;
+    const calculatedHandicap = average === null ? null : Math.max(0, Math.floor((220 - average) * 0.9));
+    return { ...bowler, average, handicap: bowler.handicapOverride ?? calculatedHandicap };
+  }).sort((a, b) => String(a.bowlerName).localeCompare(String(b.bowlerName)));
+}
+
+function bowlerDetailRows(recaps, bowlerName) {
+  const key = String(bowlerName || "").trim().toLowerCase();
+  if (!key) return [];
+  return recaps.flatMap((recap) => {
+    const line = (recap.ourTeamLines || []).find((candidate) => String(candidate.bowlerName || "").trim().toLowerCase() === key);
+    if (!line) return [];
+    const series = lineSeries(line);
+    return [{ recap, eventItem: recapCalendarEvent(recap), line, series, average: Number((series / 3).toFixed(2)) }];
+  }).sort((a, b) => String(b.recap.date).localeCompare(String(a.recap.date)));
+}
+
 function renderScores() {
   const canViewPrize = state.user?.role === "admin" || Boolean(state.config.prizeMoneyPublic);
   if (state.scoreMode === "prize" && !canViewPrize) state.scoreMode = "bowlers";
@@ -1522,10 +1732,17 @@ function renderScores() {
   $("#bowlerLogPanel").classList.toggle("hidden", state.scoreMode !== "bowlers");
   $("#recapLogPanel").classList.toggle("hidden", state.scoreMode !== "recaps");
   $("#prizeMoneyPanel").classList.toggle("hidden", state.scoreMode !== "prize" || !canViewPrize);
-  $("#bowlerStats").innerHTML = state.bowlerStats.length
-    ? state.bowlerStats.map((bowler) => `
+  renderScoreLeagueFilter();
+  const bowlerRecaps = filteredScoreRecapsForBowlerLog();
+  const bowlerStats = buildBowlerStatsFromRecaps(bowlerRecaps);
+  if (state.selectedScoreBowler && !bowlerStats.some((bowler) => bowler.bowlerName === state.selectedScoreBowler)) state.selectedScoreBowler = "";
+  const visibleBowlerStats = state.selectedScoreBowler
+    ? bowlerStats.filter((bowler) => bowler.bowlerName === state.selectedScoreBowler)
+    : bowlerStats;
+  $("#bowlerStats").innerHTML = visibleBowlerStats.length
+    ? visibleBowlerStats.map((bowler) => `
       <tr>
-        <td>${escapeHtml(bowler.bowlerName)}</td>
+        <td><button class="text-button" type="button" data-filter-bowler="${escapeHtml(bowler.bowlerName)}">${escapeHtml(bowler.bowlerName)}</button></td>
         <td>${bowler.games}</td>
         <td>${bowler.highGame || "-"}</td>
         <td>${bowler.highSeries || "-"}</td>
@@ -1534,6 +1751,7 @@ function renderScores() {
       </tr>
     `).join("")
     : `<tr><td colspan="6" class="empty">No 3FDP scores entered yet.</td></tr>`;
+  renderSelectedBowlerDetails(bowlerRecaps);
 
   renderPrizeRows();
   renderScoreWeekFilter();
@@ -1563,6 +1781,57 @@ function renderPrizeRows() {
       </tr>
     `).join("")
     : `<tr><td colspan="6" class="empty">No prize data yet.</td></tr>`;
+}
+
+function renderScoreLeagueFilter() {
+  const select = $("#scoreLeagueFilter");
+  if (!select) return;
+  const labels = [...new Set(state.scoreRecaps.map(recapLeagueLabel).filter(Boolean))]
+    .sort((a, b) => a.localeCompare(b));
+  if (state.selectedScoreLeague && !labels.includes(state.selectedScoreLeague)) {
+    state.selectedScoreLeague = "";
+    state.selectedScoreBowler = "";
+  }
+  select.innerHTML = `<option value="">All leagues/events</option>${labels.map((label) => `<option value="${escapeHtml(label)}" ${label === state.selectedScoreLeague ? "selected" : ""}>${escapeHtml(label)}</option>`).join("")}`;
+  $("#clearBowlerFilter")?.classList.toggle("hidden", !state.selectedScoreBowler);
+}
+
+function renderSelectedBowlerDetails(recaps) {
+  const panel = $("#selectedBowlerStats");
+  if (!panel) return;
+  const rows = bowlerDetailRows(recaps, state.selectedScoreBowler);
+  panel.classList.toggle("hidden", !state.selectedScoreBowler);
+  if (!state.selectedScoreBowler) {
+    panel.innerHTML = "";
+    return;
+  }
+  panel.innerHTML = `
+    <div class="section-heading compact-heading">
+      <div>
+        <p class="eyebrow">Bowler Detail</p>
+        <h3>${escapeHtml(state.selectedScoreBowler)}</h3>
+        <p class="muted">${escapeHtml(state.selectedScoreLeague || "All leagues/events")}</p>
+      </div>
+    </div>
+    <div class="table-wrap score-table-wrap">
+      <table>
+        <thead><tr><th>Date</th><th>League/Event</th><th>Pattern/Opponent</th><th>Lane</th><th>Games</th><th>Series</th><th>Avg</th></tr></thead>
+        <tbody>
+          ${rows.length ? rows.map(({ recap, eventItem, line, series, average }) => `
+            <tr>
+              <td>${escapeHtml(formatDate(recap.date))}</td>
+              <td>${escapeHtml(recapLeagueLabel(recap))}</td>
+              <td>${escapeHtml(recap.eventOpponent || eventItem?.opponent || recap.opponentTeamName || "-")}</td>
+              <td>${escapeHtml(recap.eventLane || eventItem?.lane || "-")}</td>
+              <td>${escapeHtml([line.game1, line.game2, line.game3].join(" / "))}</td>
+              <td>${series}</td>
+              <td>${average.toFixed(2)}</td>
+            </tr>
+          `).join("") : `<tr><td colspan="7" class="empty">No games for this bowler in the selected league/event.</td></tr>`}
+        </tbody>
+      </table>
+    </div>
+  `;
 }
 
 function renderScoreWeekFilter() {
@@ -1671,12 +1940,14 @@ function renderAdmin() {
       <td>
         <strong>${escapeHtml(user.username)}</strong>
         <span class="muted">${escapeHtml(user.role)}</span>
+        <span class="muted">${user.approved === false ? "Pending approval" : "Approved"}</span>
         <span class="muted">${user.bowlerType === "sub" ? "Sub bowler" : "Regular bowler"}</span>
       </td>
       <td>
         <span>${escapeHtml(user.email)}</span>
         ${user.recapName ? `<span class="muted">Recap: ${escapeHtml(user.recapName)}</span>` : ""}
         <div class="row-actions admin-user-actions">
+          ${user.approved === false ? `<button class="small" type="button" data-approve-user="${user.id}">Approve</button>` : ""}
           <button class="small ghost" type="button" data-edit-user="${user.id}">Edit</button>
           <button class="small ghost" type="button" data-reset-user="${user.id}">Reset</button>
           <button class="small danger" type="button" data-delete-user="${user.id}">Delete</button>
@@ -1818,9 +2089,11 @@ function downloadText(filename, text, type = "text/calendar") {
 async function init() {
   const me = await api("/api/me");
   state.user = me.user;
-  state.view = viewFromHash() || state.view;
+  const route = routeFromHash();
+  state.view = route.view || state.view;
   await refreshBootstrap();
   renderShell();
+  await applyRouteParams(route.params);
   if (state.user) {
     await refreshNotifications();
     startNotificationPolling();
@@ -1940,6 +2213,39 @@ $("#chatMessages").addEventListener("click", (event) => {
   openChatImage(imageButton.dataset.chatImage);
 });
 
+let chatLongPressTimer = null;
+let chatLongPressMessageId = "";
+
+function clearChatLongPress() {
+  if (chatLongPressTimer) clearTimeout(chatLongPressTimer);
+  chatLongPressTimer = null;
+  chatLongPressMessageId = "";
+}
+
+$("#chatMessages").addEventListener("pointerdown", (event) => {
+  if (event.target.closest("button, summary, input, textarea, a")) return;
+  const message = event.target.closest("[data-chat-owned='true']");
+  if (!message) return;
+  chatLongPressMessageId = message.dataset.chatMessage;
+  chatLongPressTimer = setTimeout(() => {
+    const messageId = chatLongPressMessageId;
+    clearChatLongPress();
+    deleteChatMessage(messageId).catch((error) => toast(error.message));
+  }, 650);
+});
+
+["pointerup", "pointercancel", "pointerleave", "scroll"].forEach((eventName) => {
+  $("#chatMessages").addEventListener(eventName, clearChatLongPress);
+});
+
+$("#chatMessages").addEventListener("contextmenu", (event) => {
+  const message = event.target.closest("[data-chat-owned='true']");
+  if (!message) return;
+  event.preventDefault();
+  clearChatLongPress();
+  deleteChatMessage(message.dataset.chatMessage).catch((error) => toast(error.message));
+});
+
 $("#closeChatImageDialog").addEventListener("click", () => $("#chatImageDialog").close());
 window.addEventListener("hashchange", () => openViewFromHash().catch((error) => toast(error.message)));
 window.addEventListener("focus", () => {
@@ -1983,6 +2289,19 @@ $("#pushCalendarAlerts").addEventListener("change", () => {
   state.pushPreferences = readPushPreferences();
   if (state.pushSubscribed) savePushPreferences().catch((error) => toast(error.message));
 });
+$("#addArsenalBall").addEventListener("click", () => {
+  const arsenal = readArsenalCards();
+  if (arsenal.length >= 10) return toast("You can save up to 10 balls.");
+  renderArsenalEditor([...arsenal, emptyArsenalBall()]);
+});
+$("#arsenalList").addEventListener("click", (event) => {
+  const remove = event.target.closest("[data-remove-arsenal]");
+  if (!remove) return;
+  const index = Number(remove.dataset.removeArsenal);
+  const arsenal = readArsenalCards();
+  arsenal.splice(index, 1);
+  renderArsenalEditor(arsenal);
+});
 $("#prevMonth").addEventListener("click", () => moveCalendarMonth(-1));
 $("#nextMonth").addEventListener("click", () => moveCalendarMonth(1));
 
@@ -1991,6 +2310,12 @@ $("#profileForm").addEventListener("submit", async (event) => {
   const form = event.currentTarget;
   const submit = form.querySelector("button[type='submit']");
   const payload = Object.fromEntries(new FormData(form));
+  payload.arsenal = readArsenalEditor();
+  delete payload.arsenalBall;
+  delete payload.arsenalWeight;
+  delete payload.arsenalSpeed;
+  delete payload.arsenalRpm;
+  delete payload.arsenalNotes;
   const requestedRecapName = String(payload.recapName || "").trim();
   if (submit) submit.disabled = true;
   try {
@@ -2042,6 +2367,12 @@ $("#registerForm").addEventListener("submit", async (event) => {
   }
   try {
     const data = await api("/api/register", { method: "POST", body: JSON.stringify(Object.fromEntries(formData)) });
+    if (data.pendingApproval) {
+      form.reset();
+      showRegisterForm(false);
+      toast("Account created. An admin needs to approve it before you can log in.");
+      return;
+    }
     state.user = data.user;
     state.view = "home";
     await refreshBootstrap();
@@ -2402,19 +2733,17 @@ $("#downloadCancelIcs").addEventListener("click", () => {
 
 $("#cancelEventEdit").addEventListener("click", () => resetCalendarEventForm());
 
-$("#quickEventForm").addEventListener("change", (event) => {
-  if (event.target.closest("#eventRosterList")) updateEventLineupField();
+$("#openRosterEditor").addEventListener("click", () => openRosterEditor());
+$("#saveRosterSelection").addEventListener("click", () => {
+  updateEventLineupField();
+  closeRosterEditor();
 });
-
-$("#quickEventForm").addEventListener("input", (event) => {
-  if (event.target.name === "customLineup") updateEventLineupField();
-});
+$("#cancelRosterSelection").addEventListener("click", () => cancelRosterEditor());
 
 $("#quickEventForm").addEventListener("submit", async (event) => {
   event.preventDefault();
   const form = event.currentTarget;
   try {
-    updateEventLineupField();
     const payload = Object.fromEntries(new FormData(form));
     const editingEventId = state.editingCalendarEventId;
     payload.title = String(payload.title || "").trim() || (payload.opponent ? `Bowling vs ${payload.opponent}` : "Bowling");
@@ -2545,6 +2874,24 @@ $("#scoreModeControls").addEventListener("click", (event) => {
   const canViewPrize = state.user?.role === "admin" || Boolean(state.config.prizeMoneyPublic);
   if (button.dataset.scoreMode === "prize" && !canViewPrize) return;
   state.scoreMode = button.dataset.scoreMode;
+  renderScores();
+});
+
+$("#scoreLeagueFilter").addEventListener("change", (event) => {
+  state.selectedScoreLeague = event.target.value;
+  state.selectedScoreBowler = "";
+  renderScores();
+});
+
+$("#clearBowlerFilter").addEventListener("click", () => {
+  state.selectedScoreBowler = "";
+  renderScores();
+});
+
+$("#bowlerStats").addEventListener("click", (event) => {
+  const button = event.target.closest("[data-filter-bowler]");
+  if (!button) return;
+  state.selectedScoreBowler = button.dataset.filterBowler;
   renderScores();
 });
 
@@ -2841,21 +3188,22 @@ $("#adminEditUserForm").addEventListener("submit", async (event) => {
   const form = event.currentTarget;
   const submit = form.querySelector("button[type='submit']");
   const userId = form.elements.id.value;
-  const previousUsers = [...state.adminUsers];
   if (submit) submit.disabled = true;
   try {
     const payload = Object.fromEntries(new FormData(form));
+    payload.approved = form.elements.approved.checked;
     delete payload.id;
-    state.adminUsers = state.adminUsers.map((item) => item.id === userId ? { ...item, ...payload } : item);
+    const data = await api(`/api/admin/users/${userId}`, { method: "PUT", body: JSON.stringify(payload) });
+    if (data.user) {
+      state.adminUsers = state.adminUsers.map((item) => item.id === userId ? { ...item, ...data.user } : item);
+    }
     renderAdmin();
-    await api(`/api/admin/users/${userId}`, { method: "PUT", body: JSON.stringify(payload) });
     await refreshAdmin();
     $("#adminEditUserDialog")?.close();
     setActionStatus("#userAdminStatus", "User updated.");
     toast("User updated.");
   } catch (error) {
-    state.adminUsers = previousUsers;
-    renderAdmin();
+    await refreshAdmin().catch(() => renderAdmin());
     setActionStatus("#userAdminStatus", error.message);
     toast(error.message);
   } finally {
@@ -2865,9 +3213,10 @@ $("#adminEditUserForm").addEventListener("submit", async (event) => {
 
 $("#adminUsers").addEventListener("click", async (event) => {
   const edit = event.target.closest("[data-edit-user]");
+  const approve = event.target.closest("[data-approve-user]");
   const reset = event.target.closest("[data-reset-user]");
   const del = event.target.closest("[data-delete-user]");
-  const actionButton = edit || reset || del;
+  const actionButton = edit || approve || reset || del;
   if (actionButton) actionButton.disabled = true;
   let previousUsers = null;
   try {
@@ -2881,7 +3230,27 @@ $("#adminUsers").addEventListener("click", async (event) => {
       form.elements.recapName.value = user.recapName || "";
       form.elements.bowlerType.value = user.bowlerType || "regular";
       form.elements.role.value = user.role || "user";
+      form.elements.approved.checked = user.approved !== false;
       $("#adminEditUserDialog")?.showModal();
+      return;
+    }
+    if (approve) {
+      const user = state.adminUsers.find((item) => item.id === approve.dataset.approveUser);
+      if (!user) return toast("User not found.");
+      const payload = {
+        username: user.username,
+        email: user.email,
+        recapName: user.recapName || "",
+        bowlerType: user.bowlerType || "regular",
+        role: user.role || "user",
+        approved: true
+      };
+      const data = await api(`/api/admin/users/${user.id}`, { method: "PUT", body: JSON.stringify(payload) });
+      if (data.user) state.adminUsers = state.adminUsers.map((item) => item.id === user.id ? { ...item, ...data.user } : item);
+      renderAdmin();
+      await refreshAdmin();
+      setActionStatus("#userAdminStatus", "User approved.");
+      toast("User approved.");
       return;
     }
     if (reset) {

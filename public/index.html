@@ -38,6 +38,7 @@
     </section>
 
     <nav id="menu" class="menu hidden">
+      <div id="menuUserSummary" class="menu-user-summary hidden"></div>
       <button data-view="home" type="button">Blog</button>
       <button data-view="calendar" type="button">Calendar</button>
       <button data-view="scores" type="button">Scores</button>
@@ -116,6 +117,16 @@
                 <option value="sub">Sub bowler</option>
               </select>
             </label>
+            <section class="arsenal-editor">
+              <div class="section-heading compact-heading">
+                <div>
+                  <strong>Bowling ball arsenal</strong>
+                  <p class="muted">Save up to 10 balls with delivery notes for future lane-coach suggestions.</p>
+                </div>
+                <button id="addArsenalBall" class="ghost small" type="button">Add ball</button>
+              </div>
+              <div id="arsenalList" class="arsenal-list"></div>
+            </section>
             <div class="settings-row">
               <div>
                 <strong>Push Notifications</strong>
@@ -164,15 +175,27 @@
           <div id="calendarList" class="card-list"></div>
           <form id="quickEventForm" class="form inline-form compact-event-form admin-only hidden">
             <label>Date <input name="date" type="date" required></label>
-            <label>Event name <input name="title" type="text" placeholder="Bowling night"></label>
+            <label>Event/League name <input name="title" type="text" placeholder="Bowling night or league"></label>
             <label>Location <input name="location" type="text" placeholder="Bowling alley"></label>
             <label>Lane <input name="lane" type="text" placeholder="TBD"></label>
             <label>Opponent <input name="opponent" type="text" placeholder="Opponent"></label>
             <label class="event-details-field">Event details <textarea name="details" rows="2" placeholder="Lineup notes, theme night, sub info, reminders"></textarea></label>
             <div class="roster-editor">
-              <strong>Roster</strong>
-              <div id="eventRosterList" class="roster-list"></div>
-              <label>Custom entries <input name="customLineup" type="text" placeholder="Non-team names, separated by commas"></label>
+              <div class="roster-summary-row">
+                <div>
+                  <strong>Roster</strong>
+                  <span id="eventRosterSummary" class="muted">No bowlers selected.</span>
+                </div>
+                <button id="openRosterEditor" class="ghost small" type="button">Edit roster</button>
+              </div>
+              <div id="eventRosterPanel" class="roster-panel hidden">
+                <div id="eventRosterList" class="roster-list"></div>
+                <label>Custom entries <input name="customLineup" type="text" placeholder="Non-team names, separated by commas"></label>
+                <div class="row-actions roster-actions">
+                  <button id="saveRosterSelection" class="small" type="button">Save roster</button>
+                  <button id="cancelRosterSelection" class="ghost small" type="button">Cancel</button>
+                </div>
+              </div>
               <input name="lineup" type="hidden">
             </div>
             <label>Start <input name="startTime" type="time"></label>
@@ -253,6 +276,7 @@
             <div class="score-basic-grid">
               <label>Date <input name="date" type="date" required></label>
               <label>Week <input name="week" type="text" placeholder="1"></label>
+              <label>League/Event <input name="eventName" type="text" placeholder="Thursday Mixers or Summer Sweeper"></label>
             </div>
             <label>Recap photo <input name="recapPhoto" type="file" accept="image/*"></label>
             <div id="scorePhotoPreview" class="score-photo-preview hidden"></div>
@@ -304,12 +328,17 @@
             </div>
           </div>
           <div id="bowlerLogPanel" class="score-view-panel">
-          <div class="table-wrap score-table-wrap">
-            <table>
-              <thead><tr><th>Bowler</th><th>Games</th><th>High Game</th><th>High Series</th><th>Average</th><th>HDCP</th></tr></thead>
-              <tbody id="bowlerStats"></tbody>
-            </table>
-          </div>
+            <div class="section-heading score-filter-heading">
+              <label>League/Event <select id="scoreLeagueFilter"></select></label>
+              <button id="clearBowlerFilter" class="ghost small hidden" type="button">Show all bowlers</button>
+            </div>
+            <div class="table-wrap score-table-wrap">
+              <table>
+                <thead><tr><th>Bowler</th><th>Games</th><th>High Game</th><th>High Series</th><th>Average</th><th>HDCP</th></tr></thead>
+                <tbody id="bowlerStats"></tbody>
+              </table>
+            </div>
+            <div id="selectedBowlerStats" class="bowler-detail-panel hidden"></div>
           </div>
           <div id="recapLogPanel" class="score-view-panel hidden">
             <div class="section-heading score-filter-heading">
@@ -407,6 +436,7 @@
                 <option value="admin">Admin</option>
               </select>
             </label>
+            <label class="check-row"><input name="approved" type="checkbox"> Account approved</label>
             <div class="row-actions">
               <button type="submit">Save user</button>
               <button id="cancelAdminEditUser" class="ghost" type="button">Cancel</button>

@@ -151,10 +151,23 @@ function publicUser(user) {
     username: user.username,
     recapName: user.recapName || "",
     bowlerType: user.bowlerType === "sub" ? "sub" : "regular",
+    arsenal: normalizeArsenal(user.arsenal),
     role: user.role,
+    approved: user.approved !== false,
     passwordSetupRequired: Boolean(user.passwordSetupRequired),
     createdAt: user.createdAt
   };
+}
+
+function normalizeArsenal(value) {
+  const rows = Array.isArray(value) ? value : [];
+  return rows.slice(0, 10).map((row) => ({
+    ball: String(row?.ball || "").trim().slice(0, 80),
+    weight: String(row?.weight || "").trim().slice(0, 20),
+    speed: String(row?.speed || row?.typicalThrowSpeed || "").trim().slice(0, 40),
+    rpm: String(row?.rpm || row?.typicalRpm || "").trim().slice(0, 40),
+    notes: String(row?.notes || row?.deliveryNotes || "").trim().slice(0, 600)
+  })).filter((row) => row.ball || row.weight || row.speed || row.rpm || row.notes);
 }
 
 function loginMatchesUser(user, login) {
@@ -176,6 +189,7 @@ function currentUser(event, data) {
 function requireUser(event, data) {
   const user = currentUser(event, data);
   if (!user) throw Object.assign(new Error("Please log in first."), { statusCode: 401 });
+  if (user.approved === false) throw Object.assign(new Error("Your account is waiting for admin approval."), { statusCode: 403 });
   return user;
 }
 
@@ -510,15 +524,6 @@ function normalizedCalendarRow(row, data) {
   };
 }
 
-function isSummerSweeperEvent(eventItem) {
-  return /summer\s*sweeper/i.test([
-    eventItem?.title,
-    eventItem?.leagueName,
-    eventItem?.opponent,
-    eventItem?.details
-  ].filter(Boolean).join(" "));
-}
-
 function addNameToEventLineup(eventItem, name) {
   const bowlerName = String(name || "").trim();
   if (!bowlerName) return false;
@@ -739,6 +744,10 @@ function normalizeScoreRecap(body, existing = {}, options = {}) {
     ...existing,
     date,
     week: body.week === "" || body.week === undefined ? "" : String(body.week).trim(),
+    eventId: calendarEvent?.id || existing.eventId || "",
+    eventName: String(body.eventName || calendarEvent?.leagueName || calendarEvent?.title || existing.eventName || "").trim(),
+    eventLane: String(calendarEvent?.lane || existing.eventLane || "").trim(),
+    eventOpponent: String(calendarEvent?.opponent || existing.eventOpponent || "").trim(),
     ourTeamName: normalizeTeamName(body.ourTeamName || "3FDP", "3FDP"),
     opponentTeamName: String(calendarEvent?.opponent || body.opponentTeamName || "").trim(),
     ourTeamLines,
@@ -1211,6 +1220,7 @@ exports.handler = async (event) => {
       const password = String(body.password || "");
       const user = data.users.find((candidate) => loginMatchesUser(candidate, login));
       if (!user || !verifyPassword(password, user)) return json(401, { error: "Invalid login or password." });
+      if (user.approved === false) return json(403, { error: "Your account is waiting for admin approval." });
       const token = sign({ userId: user.id, issuedAt: Date.now() });
       return json(200, { user: publicUser(user) }, {
         "Set-Cookie": `session=${encodeURIComponent(token)}; HttpOnly; SameSite=Lax; Path=/; Max-Age=604800`
@@ -1244,6 +1254,7 @@ exports.handler = async (event) => {
       if (recapName.length > 80) return json(400, { error: "Recap sheet name is too long." });
       user.recapName = recapName;
       user.bowlerType = normalizeBowlerType(body.bowlerType || user.bowlerType);
+      user.arsenal = normalizeArsenal(body.arsenal);
       await saveData(data);
       return json(200, { user: publicUser(user) });
     }
@@ -1262,27 +1273,33 @@ exports.handler = async (event) => {
       if (isFirstUser && process.env.ADMIN_SETUP_CODE && setupCode !== process.env.ADMIN_SETUP_CODE) return json(403, { error: "Admin setup code is required." });
       if (data.users.some((user) => user.email === email || user.username.toLowerCase() === username.toLowerCase())) return json(409, { error: "That email or username is already registered." });
       const { salt, hash } = hashPassword(password);
-      const newUser = { id: crypto.randomUUID(), email, username, recapName, bowlerType, passwordSalt: salt, passwordHash: hash, role: isFirstUser ? "admin" : "user", createdAt: new Date().toISOString() };
+      const approved = isFirstUser;
+      const newUser = { id: crypto.randomUUID(), email, username, recapName, bowlerType, approved, passwordSalt: salt, passwordHash: hash, role: isFirstUser ? "admin" : "user", createdAt: new Date().toISOString() };
       data.users.push(newUser);
-      data.notes.push({
-        id: crypto.randomUUID(),
-        userId: newUser.id,
-        username: newUser.username,
-        text: `${newUser.username} joined the team site.`,
-        comments: [],
-        systemKey: `user-joined-${newUser.id}`,
-        createdAt: new Date().toISOString()
-      });
+      if (approved) {
+        data.notes.push({
+          id: crypto.randomUUID(),
+          userId: newUser.id,
+          username: newUser.username,
+          text: `${newUser.username} joined the team site.`,
+          comments: [],
+          systemKey: `user-joined-${newUser.id}`,
+          createdAt: new Date().toISOString()
+        });
+      }
       await saveData(data);
-      await sendBlogNotification(data, newUser.id, {
-        title: "3FDP new user",
-        body: `${newUser.username} joined the team site.`,
-        tag: `user-joined-${newUser.id}`
-      });
-      const token = sign({ userId: newUser.id, issuedAt: Date.now() });
-      return json(201, { ok: true, user: publicUser(newUser) }, {
-        "Set-Cookie": `session=${encodeURIComponent(token)}; HttpOnly; SameSite=Lax; Path=/; Max-Age=604800`
-      });
+      if (approved) {
+        await sendBlogNotification(data, newUser.id, {
+          title: "3FDP new user",
+          body: `${newUser.username} joined the team site.`,
+          tag: `user-joined-${newUser.id}`
+        });
+        const token = sign({ userId: newUser.id, issuedAt: Date.now() });
+        return json(201, { ok: true, user: publicUser(newUser) }, {
+          "Set-Cookie": `session=${encodeURIComponent(token)}; HttpOnly; SameSite=Lax; Path=/; Max-Age=604800`
+        });
+      }
+      return json(201, { ok: true, pendingApproval: true, user: publicUser(newUser) });
     }
 
     if (method === "GET" && route === "/bootstrap") {
@@ -1391,10 +1408,13 @@ exports.handler = async (event) => {
       const recapName = String(body.recapName || "").trim();
       const bowlerType = normalizeBowlerType(body.bowlerType || target.bowlerType);
       const role = String(body.role || target.role || "user").trim();
+      const wasApproved = target.approved !== false;
+      const approved = normalizeBoolean(body.approved, target.approved !== false);
       if (!email.includes("@") || username.length < 2) return json(400, { error: "Use a valid email and username." });
       if (recapName.length > 80) return json(400, { error: "Recap sheet name is too long." });
       if (!["admin", "user"].includes(role)) return json(400, { error: "Role must be admin or user." });
       if (target.id === admin.id && role !== "admin") return json(400, { error: "You cannot remove admin from your current account." });
+      if (target.id === admin.id && !approved) return json(400, { error: "You cannot unapprove your current account." });
       if (data.users.some((user) => user.id !== userId && (user.email === email || user.username.toLowerCase() === username.toLowerCase()))) {
         return json(409, { error: "That email or username is already registered." });
       }
@@ -1403,11 +1423,33 @@ exports.handler = async (event) => {
       target.recapName = recapName;
       target.bowlerType = bowlerType;
       target.role = role;
+      target.approved = approved;
       target.updatedAt = new Date().toISOString();
       data.pushSubscriptions.forEach((subscription) => {
         if (subscription.userId === target.id) subscription.username = username;
       });
+      if (!wasApproved && approved) {
+        const systemKey = `user-joined-${target.id}`;
+        if (!data.notes.some((note) => note.systemKey === systemKey)) {
+          data.notes.push({
+            id: crypto.randomUUID(),
+            userId: target.id,
+            username: target.username,
+            text: `${target.username} joined the team site.`,
+            comments: [],
+            systemKey,
+            createdAt: new Date().toISOString()
+          });
+        }
+      }
       await saveData(data);
+      if (!wasApproved && approved) {
+        await sendBlogNotification(data, target.id, {
+          title: "3FDP new user",
+          body: `${target.username} joined the team site.`,
+          tag: `user-joined-${target.id}`
+        });
+      }
       return json(200, { user: publicUser(target) });
     }
 
@@ -1571,7 +1613,7 @@ exports.handler = async (event) => {
       data.chatMessages = [...(data.chatMessages || []), message].slice(-200);
       await saveData(data);
       await sendChatNotification(data, user.id, message);
-      await sendMentionNotifications(data, user.id, text, { label: "team chat", type: "chat", id: message.id, url: "/#home" });
+      await sendMentionNotifications(data, user.id, text, { label: "team chat", type: "chat", id: message.id, url: `/#home?chat=${encodeURIComponent(message.id)}` });
       return json(201, { messages: sortedChatMessages(data), message });
     }
 
@@ -1583,6 +1625,17 @@ exports.handler = async (event) => {
       if (!message) return json(404, { error: "Chat message not found." });
       if (!reaction) return json(400, { error: "Choose a valid reaction." });
       toggleReaction(message, user, reaction);
+      await saveData(data);
+      return json(200, { messages: sortedChatMessages(data) });
+    }
+
+    if (method === "DELETE" && /^\/chat\/messages\/[^/]+$/.test(route)) {
+      const user = requireUser(event, data);
+      const messageId = decodeURIComponent(route.split("/")[3]);
+      const message = (data.chatMessages || []).find((candidate) => candidate.id === messageId);
+      if (!message) return json(404, { error: "Chat message not found." });
+      if (!canManageOwnedItem(user, message)) return json(403, { error: "You can only delete your own chat messages." });
+      data.chatMessages = (data.chatMessages || []).filter((candidate) => candidate.id !== messageId);
       await saveData(data);
       return json(200, { messages: sortedChatMessages(data) });
     }
@@ -1682,7 +1735,6 @@ exports.handler = async (event) => {
       const eventId = decodeURIComponent(route.split("/")[3]);
       const eventItem = data.calendarEvents.find((candidate) => candidate.id === eventId);
       if (!eventItem) return json(404, { error: "Calendar event not found." });
-      if (!isSummerSweeperEvent(eventItem)) return json(403, { error: "This event does not allow self-added lineups." });
       const bowlerName = userBowlerName(user);
       if (!bowlerName) return json(400, { error: "Add your recap sheet name in User Options first." });
       const added = addNameToEventLineup(eventItem, bowlerName);

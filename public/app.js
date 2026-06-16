@@ -824,11 +824,21 @@ async function toggleReaction(type, target, reaction) {
   }
 }
 
+function setInstalledAppBadge(count) {
+  if (!("setAppBadge" in navigator)) return;
+  const update = count > 0
+    ? navigator.setAppBadge(Math.min(count, 99))
+    : ("clearAppBadge" in navigator ? navigator.clearAppBadge() : navigator.setAppBadge(0));
+  update.catch(() => {});
+}
+
 function renderNotificationBadge(count = state.notifications.length) {
   const badge = $("#notificationBadge");
-  if (!badge) return;
-  badge.classList.toggle("hidden", !count);
-  badge.textContent = count > 9 ? "9+" : String(count);
+  if (badge) {
+    badge.classList.toggle("hidden", !count);
+    badge.textContent = count > 9 ? "9+" : String(count);
+  }
+  setInstalledAppBadge(count);
 }
 
 function renderNotifications() {

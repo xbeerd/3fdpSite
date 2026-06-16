@@ -544,12 +544,18 @@ textarea:-webkit-autofill {
   display: flex;
   flex-wrap: wrap;
   gap: 0.28rem;
-  margin-top: 0.35rem;
+  margin: 0;
 }
 
 .reaction-picker {
+  display: inline-flex;
+  flex-direction: column-reverse;
   width: fit-content;
   margin-top: 0.35rem;
+}
+
+.reaction-picker[open] {
+  gap: 0.28rem;
 }
 
 .reaction-picker summary {

@@ -1134,7 +1134,12 @@ async function sendBlogNotification(data, actorUserId, payload) {
 
 async function sendChatNotification(data, actorUserId, message) {
   if (!pushConfigured() || !data.pushSubscriptions.length) return;
-  const subscriptions = data.pushSubscriptions.filter((saved) => saved.userId !== actorUserId && normalizePushPreferences(saved.preferences).chatAlerts);
+  const actorName = String(message.username || "").trim().toLowerCase();
+  const subscriptions = data.pushSubscriptions.filter((saved) => (
+    saved.userId !== actorUserId &&
+    String(saved.username || "").trim().toLowerCase() !== actorName &&
+    normalizePushPreferences(saved.preferences).chatAlerts
+  ));
   if (!subscriptions.length) return;
   const text = String(message.text || "");
   const notification = JSON.stringify({

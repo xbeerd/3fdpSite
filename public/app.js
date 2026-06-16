@@ -1145,10 +1145,9 @@ function renderEventRosterOptions(selectedLineup = null) {
   const users = eventRosterUsers();
   const selected = new Set((selectedLineup || parseLineupText(form.elements.lineup?.value || ""))
     .map((name) => name.toLowerCase()));
-  const useDefaults = !selected.size && !state.editingCalendarEventId;
   list.innerHTML = users.length
     ? users.map((user) => {
-      const checked = useDefaults ? user.bowlerType !== "sub" : selected.has(user.rosterName.toLowerCase());
+      const checked = selected.has(user.rosterName.toLowerCase());
       return `
         <label class="roster-chip">
           <input type="checkbox" value="${escapeHtml(user.rosterName)}" ${checked ? "checked" : ""}>
@@ -1231,7 +1230,7 @@ function renderSelectedCalendarEvent() {
   if (!eventItem) return `<p class="empty">Select an event on the calendar to view details.</p>`;
   const request = state.subRequests.find((item) => item.eventId === eventItem.id);
   const recap = scoreRecapForDate(eventItem.date);
-  const lineup = eventItem.lineup?.length ? eventItem.lineup : state.regularLineup;
+  const lineup = eventItem.lineup?.length ? eventItem.lineup : [];
   const canSelfAdd = state.user && !eventLineupHasCurrentUser(eventItem);
   const adminControls = state.user?.role === "admin"
     ? `
@@ -1675,6 +1674,10 @@ function filteredScoreRecapsForBowlerLog() {
     : state.scoreRecaps;
 }
 
+function filteredScoreRecapsForLeague() {
+  return filteredScoreRecapsForBowlerLog();
+}
+
 function lineSeries(line) {
   return Number(line.game1 || 0) + Number(line.game2 || 0) + Number(line.game3 || 0);
 }
@@ -1709,6 +1712,32 @@ function buildBowlerStatsFromRecaps(recaps) {
   }).sort((a, b) => String(a.bowlerName).localeCompare(String(b.bowlerName)));
 }
 
+function buildPrizeRowsFromRecaps(recaps) {
+  const prizeMap = new Map();
+  for (const recap of recaps) {
+    for (const line of recap.ourTeamLines || []) {
+      const key = String(line.bowlerName || "").trim().toLowerCase();
+      if (!key) continue;
+      const current = prizeMap.get(key) || {
+        bowlerName: line.bowlerName,
+        gamesBowled: 0,
+        paidGames: 0,
+        unpaidSubGames: 0
+      };
+      current.gamesBowled += 3;
+      const paidGames = (!line.isSub || line.paid) ? 3 : 0;
+      current.paidGames += paidGames;
+      current.unpaidSubGames += line.isSub && !line.paid ? 3 : 0;
+      prizeMap.set(key, current);
+    }
+  }
+  const totalPaidGames = [...prizeMap.values()].reduce((sum, row) => sum + row.paidGames, 0);
+  return [...prizeMap.values()].map((row) => ({
+    ...row,
+    paidPercent: totalPaidGames ? Number(((row.paidGames / totalPaidGames) * 100).toFixed(2)) : 0
+  })).sort((a, b) => String(a.bowlerName).localeCompare(String(b.bowlerName)));
+}
+
 function bowlerDetailRows(recaps, bowlerName) {
   const key = String(bowlerName || "").trim().toLowerCase();
   if (!key) return [];
@@ -1733,7 +1762,7 @@ function renderScores() {
   $("#recapLogPanel").classList.toggle("hidden", state.scoreMode !== "recaps");
   $("#prizeMoneyPanel").classList.toggle("hidden", state.scoreMode !== "prize" || !canViewPrize);
   renderScoreLeagueFilter();
-  const bowlerRecaps = filteredScoreRecapsForBowlerLog();
+  const bowlerRecaps = filteredScoreRecapsForLeague();
   const bowlerStats = buildBowlerStatsFromRecaps(bowlerRecaps);
   if (state.selectedScoreBowler && !bowlerStats.some((bowler) => bowler.bowlerName === state.selectedScoreBowler)) state.selectedScoreBowler = "";
   const visibleBowlerStats = state.selectedScoreBowler
@@ -1755,9 +1784,10 @@ function renderScores() {
 
   renderPrizeRows();
   renderScoreWeekFilter();
+  const leagueFilteredRecaps = filteredScoreRecapsForLeague();
   const filteredRecaps = state.selectedScoreWeek
-    ? state.scoreRecaps.filter((recap) => String(recap.week || "") === state.selectedScoreWeek)
-    : state.scoreRecaps;
+    ? leagueFilteredRecaps.filter((recap) => String(recap.week || "") === state.selectedScoreWeek)
+    : leagueFilteredRecaps;
   $("#scoreRecaps").innerHTML = filteredRecaps.length
     ? filteredRecaps.map(renderScoreRecap).join("")
     : `<p class="empty">No weekly recaps yet.</p>`;
@@ -1765,7 +1795,7 @@ function renderScores() {
 
 function renderPrizeRows() {
   const pot = Number(state.prizePot || 0);
-  const rows = state.prizeRows || [];
+  const rows = buildPrizeRowsFromRecaps(filteredScoreRecapsForLeague());
   const target = $("#prizeRows");
   if (!target) return;
   $("#prizePotForm input[name='prizePot']").value = state.prizePot || "";
@@ -1784,15 +1814,18 @@ function renderPrizeRows() {
 }
 
 function renderScoreLeagueFilter() {
-  const select = $("#scoreLeagueFilter");
-  if (!select) return;
+  const selects = $$(".score-league-filter");
+  if (!selects.length) return;
   const labels = [...new Set(state.scoreRecaps.map(recapLeagueLabel).filter(Boolean))]
     .sort((a, b) => a.localeCompare(b));
   if (state.selectedScoreLeague && !labels.includes(state.selectedScoreLeague)) {
     state.selectedScoreLeague = "";
     state.selectedScoreBowler = "";
   }
-  select.innerHTML = `<option value="">All leagues/events</option>${labels.map((label) => `<option value="${escapeHtml(label)}" ${label === state.selectedScoreLeague ? "selected" : ""}>${escapeHtml(label)}</option>`).join("")}`;
+  const html = `<option value="">All leagues/events</option>${labels.map((label) => `<option value="${escapeHtml(label)}" ${label === state.selectedScoreLeague ? "selected" : ""}>${escapeHtml(label)}</option>`).join("")}`;
+  selects.forEach((select) => {
+    select.innerHTML = html;
+  });
   $("#clearBowlerFilter")?.classList.toggle("hidden", !state.selectedScoreBowler);
 }
 
@@ -1837,7 +1870,7 @@ function renderSelectedBowlerDetails(recaps) {
 function renderScoreWeekFilter() {
   const select = $("#scoreWeekFilter");
   if (!select) return;
-  const weeks = [...new Set(state.scoreRecaps.map((recap) => String(recap.week || "").trim()).filter(Boolean))]
+  const weeks = [...new Set(filteredScoreRecapsForLeague().map((recap) => String(recap.week || "").trim()).filter(Boolean))]
     .sort((a, b) => Number(a) - Number(b) || a.localeCompare(b));
   if (state.selectedScoreWeek && !weeks.includes(state.selectedScoreWeek)) state.selectedScoreWeek = "";
   select.innerHTML = `<option value="">All weeks</option>${weeks.map((week) => `<option value="${escapeHtml(week)}" ${week === state.selectedScoreWeek ? "selected" : ""}>Week ${escapeHtml(week)}</option>`).join("")}`;
@@ -2877,10 +2910,12 @@ $("#scoreModeControls").addEventListener("click", (event) => {
   renderScores();
 });
 
-$("#scoreLeagueFilter").addEventListener("change", (event) => {
-  state.selectedScoreLeague = event.target.value;
-  state.selectedScoreBowler = "";
-  renderScores();
+$$(".score-league-filter").forEach((select) => {
+  select.addEventListener("change", (event) => {
+    state.selectedScoreLeague = event.target.value;
+    state.selectedScoreWeek = "";
+    renderScores();
+  });
 });
 
 $("#clearBowlerFilter").addEventListener("click", () => {

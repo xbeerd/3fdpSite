@@ -448,7 +448,7 @@ function confirmedSubResponse(request) {
 }
 
 function effectiveLineupForEvent(eventItem, request = null, data = null) {
-  const base = normalizeLineup(eventItem?.lineup, data || { users: [] });
+  const base = normalizeLineup(eventItem?.lineup, data || { users: [] }, { useDefault: false });
   const confirmed = confirmedSubResponse(request);
   if (!confirmed) return base;
   const regularName = String(request.requestedFor || request.requestedBy || "").trim();
@@ -501,15 +501,15 @@ function regularBowlerNames(data) {
     .filter(Boolean);
 }
 
-function normalizeLineup(value, data) {
+function normalizeLineup(value, data, options = {}) {
   const raw = Array.isArray(value)
     ? value
     : String(value || "").split(/[|;,]/);
   const lineup = raw.map((name) => String(name || "").trim()).filter(Boolean);
-  return lineup.length ? lineup : regularBowlerNames(data);
+  return lineup.length ? lineup : (options.useDefault ? regularBowlerNames(data) : []);
 }
 
-function normalizedCalendarRow(row, data) {
+function normalizedCalendarRow(row, data, options = {}) {
   return {
     date: row.date,
     startTime: row.startTime || data.config.bowlingStartTime,
@@ -519,7 +519,7 @@ function normalizedCalendarRow(row, data) {
     leagueName: row.leagueName || "",
     opponent: row.opponent || "",
     details: String(row.details || row.description || row.notes || "").trim(),
-    lineup: normalizeLineup(row.lineup || row.regularBowlers || row.bowlers, data),
+    lineup: normalizeLineup(row.lineup || row.regularBowlers || row.bowlers, data, { useDefault: Boolean(options.defaultLineup) }),
     title: row.title || (row.leagueName ? `${row.leagueName}${row.opponent ? ` vs ${row.opponent}` : ""}` : `Bowling vs ${row.opponent || "TBD"}`)
   };
 }
@@ -1661,7 +1661,7 @@ exports.handler = async (event) => {
         }
         const existing = row.id ? data.calendarEvents.find((eventItem) => eventItem.id === row.id) : null;
         const eventItem = existing || { id: crypto.randomUUID(), createdAt: new Date().toISOString() };
-        Object.assign(eventItem, normalizedCalendarRow(row, data));
+        Object.assign(eventItem, normalizedCalendarRow(row, data, { defaultLineup: bulkImport }));
         if (!existing) {
           const key = eventDuplicateKey(eventItem);
           if (existingKeys.has(key)) {

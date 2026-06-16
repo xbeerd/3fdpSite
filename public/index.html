@@ -329,7 +329,7 @@
           </div>
           <div id="bowlerLogPanel" class="score-view-panel">
             <div class="section-heading score-filter-heading">
-              <label>League/Event <select id="scoreLeagueFilter"></select></label>
+              <label>League/Event <select id="scoreLeagueFilter" class="score-league-filter"></select></label>
               <button id="clearBowlerFilter" class="ghost small hidden" type="button">Show all bowlers</button>
             </div>
             <div class="table-wrap score-table-wrap">
@@ -342,11 +342,15 @@
           </div>
           <div id="recapLogPanel" class="score-view-panel hidden">
             <div class="section-heading score-filter-heading">
+              <label>League/Event <select id="recapLeagueFilter" class="score-league-filter"></select></label>
               <label>Week <select id="scoreWeekFilter"></select></label>
             </div>
             <div id="scoreRecaps" class="score-recaps"></div>
           </div>
           <div id="prizeMoneyPanel" class="score-view-panel hidden">
+            <div class="section-heading score-filter-heading">
+              <label>League/Event <select id="prizeLeagueFilter" class="score-league-filter"></select></label>
+            </div>
             <form id="prizePotForm" class="form inline-form">
               <label>Prize pot <input name="prizePot" type="number" min="0" step="0.01" placeholder="0.00"></label>
               <button type="submit">Calculate</button>

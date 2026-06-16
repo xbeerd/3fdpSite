@@ -124,6 +124,8 @@
                   <label class="check-row"><input id="pushSubAlerts" type="checkbox"> Sub requests</label>
                   <label class="check-row"><input id="pushBlogAlerts" type="checkbox"> Blog posts and replies</label>
                   <label class="check-row"><input id="pushChatAlerts" type="checkbox"> Chat messages</label>
+                  <label class="check-row"><input id="pushMentionAlerts" type="checkbox"> Mentions</label>
+                  <label class="check-row"><input id="pushCalendarAlerts" type="checkbox"> New calendar events</label>
                 </div>
               </div>
               <div id="pushControls" class="row-actions hidden">
@@ -166,7 +168,13 @@
             <label>Location <input name="location" type="text" placeholder="Bowling alley"></label>
             <label>Lane <input name="lane" type="text" placeholder="TBD"></label>
             <label>Opponent <input name="opponent" type="text" placeholder="Opponent"></label>
-            <label>Lineup <input name="lineup" type="text" placeholder="Bowler 1, Bowler 2, Bowler 3"></label>
+            <label class="event-details-field">Event details <textarea name="details" rows="2" placeholder="Lineup notes, theme night, sub info, reminders"></textarea></label>
+            <div class="roster-editor">
+              <strong>Roster</strong>
+              <div id="eventRosterList" class="roster-list"></div>
+              <label>Custom entries <input name="customLineup" type="text" placeholder="Non-team names, separated by commas"></label>
+              <input name="lineup" type="hidden">
+            </div>
             <label>Start <input name="startTime" type="time"></label>
             <label>Practice <input name="practiceTime" type="time"></label>
             <button type="submit">Add event</button>

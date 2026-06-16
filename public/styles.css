@@ -279,7 +279,7 @@ main {
 .form { display: grid; gap: 0.85rem; margin-top: 0.9rem; min-width: 0; }
 .inline-form { grid-template-columns: repeat(auto-fit, minmax(min(160px, 100%), 1fr)); align-items: end; }
 .compact-event-form {
-  grid-template-columns: 1.05fr 1.4fr 1.3fr 0.65fr 1.25fr 0.75fr 0.75fr auto;
+  grid-template-columns: 1.05fr 1.4fr 1.3fr 0.65fr 1.25fr 1.35fr 0.75fr 0.75fr auto;
   gap: 0.55rem;
   align-items: end;
   padding-top: 0.85rem;
@@ -294,6 +294,54 @@ main {
   min-height: 38px;
   padding: 0.55rem 0.58rem;
   font-size: 0.86rem;
+}
+
+.compact-event-form textarea {
+  min-height: 62px;
+  padding: 0.55rem 0.58rem;
+  font-size: 0.86rem;
+}
+
+.event-details-field {
+  grid-column: span 2;
+}
+
+.roster-editor {
+  display: grid;
+  gap: 0.42rem;
+  min-width: 0;
+}
+
+.roster-editor strong {
+  color: var(--muted);
+  font-size: 0.76rem;
+}
+
+.roster-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.28rem;
+}
+
+.roster-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.24rem;
+  min-height: 32px;
+  padding: 0.24rem 0.42rem;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: #f7f7f7;
+  color: var(--text);
+  font-size: 0.72rem;
+  font-weight: 800;
+}
+
+.roster-chip input {
+  min-height: 0;
+  width: 0.95rem;
+  height: 0.95rem;
+  padding: 0;
 }
 
 .compact-event-form button {
@@ -497,6 +545,40 @@ textarea:-webkit-autofill {
   flex-wrap: wrap;
   gap: 0.28rem;
   margin-top: 0.35rem;
+}
+
+.reaction-picker {
+  width: fit-content;
+  margin-top: 0.35rem;
+}
+
+.reaction-picker summary {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.28rem;
+  min-height: 2rem;
+  padding: 0.25rem 0.48rem;
+  color: var(--text);
+  background: #f7f7f7;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  cursor: pointer;
+  list-style: none;
+}
+
+.reaction-picker summary::-webkit-details-marker { display: none; }
+
+.reaction-summary,
+.reaction-summary-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.18rem;
+  font-size: 0.78rem;
+  font-weight: 850;
+}
+
+.reaction-summary b {
+  font-size: 0.68rem;
 }
 
 .reaction-button {
@@ -1195,6 +1277,8 @@ td .muted { display: block; margin-top: 0.2rem; font-size: 0.8rem; }
   .compact-event-form label:nth-child(2),
   .compact-event-form label:nth-child(3),
   .compact-event-form label:nth-child(5),
+  .compact-event-form .event-details-field,
+  .compact-event-form .roster-editor,
   .compact-event-form button {
     grid-column: 1 / -1;
   }
@@ -1292,6 +1376,14 @@ td .muted { display: block; margin-top: 0.2rem; font-size: 0.8rem; }
   .compact-event-form input {
     padding: 0.5rem;
     font-size: 0.82rem;
+  }
+  .compact-event-form textarea {
+    padding: 0.5rem;
+    font-size: 0.82rem;
+  }
+  .roster-chip {
+    font-size: 0.68rem;
+    padding: 0.22rem 0.34rem;
   }
   .admin-config-form {
     grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);

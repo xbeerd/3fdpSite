@@ -504,9 +504,30 @@ function normalizedCalendarRow(row, data) {
     location: row.location || "",
     leagueName: row.leagueName || "",
     opponent: row.opponent || "",
+    details: String(row.details || row.description || row.notes || "").trim(),
     lineup: normalizeLineup(row.lineup || row.regularBowlers || row.bowlers, data),
     title: row.title || (row.leagueName ? `${row.leagueName}${row.opponent ? ` vs ${row.opponent}` : ""}` : `Bowling vs ${row.opponent || "TBD"}`)
   };
+}
+
+function isSummerSweeperEvent(eventItem) {
+  return /summer\s*sweeper/i.test([
+    eventItem?.title,
+    eventItem?.leagueName,
+    eventItem?.opponent,
+    eventItem?.details
+  ].filter(Boolean).join(" "));
+}
+
+function addNameToEventLineup(eventItem, name) {
+  const bowlerName = String(name || "").trim();
+  if (!bowlerName) return false;
+  const lineup = Array.isArray(eventItem.lineup) ? eventItem.lineup : [];
+  const existing = new Set(lineup.map((item) => String(item || "").trim().toLowerCase()));
+  if (existing.has(bowlerName.toLowerCase())) return false;
+  eventItem.lineup = [...lineup, bowlerName];
+  eventItem.updatedAt = new Date().toISOString();
+  return true;
 }
 
 function normalizeScoreValue(value) {
@@ -950,7 +971,9 @@ function normalizePushPreferences(value = {}) {
   return {
     subAlerts: normalizeBoolean(value.subAlerts, true),
     blogAlerts: normalizeBoolean(value.blogAlerts, true),
-    chatAlerts: normalizeBoolean(value.chatAlerts, true)
+    chatAlerts: normalizeBoolean(value.chatAlerts, true),
+    mentionAlerts: normalizeBoolean(value.mentionAlerts, true),
+    calendarAlerts: normalizeBoolean(value.calendarAlerts, true)
   };
 }
 
@@ -961,6 +984,57 @@ function normalizePushSubscription(value) {
   const auth = String(value.keys?.auth || "").trim();
   if (!endpoint || !p256dh || !auth) return null;
   return { endpoint, expirationTime: value.expirationTime || null, keys: { p256dh, auth } };
+}
+
+function mentionKey(value) {
+  return String(value || "").toLowerCase().replace(/[^a-z0-9]/g, "");
+}
+
+function userMentionKeys(user) {
+  const keys = new Set();
+  for (const name of [user.username, user.recapName]) {
+    const normalized = mentionKey(name);
+    if (normalized) keys.add(normalized);
+    const first = mentionKey(String(name || "").split(/\s+/)[0]);
+    if (first && first.length >= 2) keys.add(first);
+  }
+  return keys;
+}
+
+function mentionedUserIds(data, text, actorUserId) {
+  const value = String(text || "");
+  if (!value.includes("@")) return new Set();
+  const rawMentions = [...value.matchAll(/@([a-z0-9][a-z0-9._ -]{0,60})/gi)]
+    .map((match) => mentionKey(match[1]))
+    .filter(Boolean);
+  if (!rawMentions.length) return new Set();
+  const found = new Set();
+  for (const user of data.users || []) {
+    if (user.id === actorUserId) continue;
+    const keys = userMentionKeys(user);
+    if (rawMentions.some((mention) => keys.has(mention) || [...keys].some((key) => key.length >= 3 && mention.startsWith(key)))) {
+      found.add(user.id);
+    }
+  }
+  return found;
+}
+
+async function sendPushToSubscriptions(data, subscriptions, payload, errorLabel) {
+  if (!subscriptions.length) return;
+  const notification = JSON.stringify(payload);
+  const expired = new Set();
+  await Promise.all(subscriptions.map(async (saved) => {
+    try {
+      await webPush.sendNotification(saved.subscription, notification);
+    } catch (error) {
+      if (error.statusCode === 404 || error.statusCode === 410) expired.add(saved.id);
+      else console.error(`${errorLabel} push notification failed:`, error.message || error);
+    }
+  }));
+  if (expired.size) {
+    data.pushSubscriptions = data.pushSubscriptions.filter((subscription) => !expired.has(subscription.id));
+    await saveData(data);
+  }
 }
 
 async function sendSubRequestNotifications(data, request, eventItem) {
@@ -1082,6 +1156,36 @@ async function sendChatNotification(data, actorUserId, message) {
     data.pushSubscriptions = data.pushSubscriptions.filter((subscription) => !expired.has(subscription.id));
     await saveData(data);
   }
+}
+
+async function sendMentionNotifications(data, actorUserId, text, context) {
+  if (!pushConfigured() || !data.pushSubscriptions.length) return;
+  const targetUserIds = mentionedUserIds(data, text, actorUserId);
+  if (!targetUserIds.size) return;
+  const actor = data.users.find((user) => user.id === actorUserId);
+  const subscriptions = data.pushSubscriptions.filter((saved) => targetUserIds.has(saved.userId) && normalizePushPreferences(saved.preferences).mentionAlerts);
+  await sendPushToSubscriptions(data, subscriptions, {
+    title: "3FDP mention",
+    body: `${actor?.username || "Someone"} mentioned you in ${context.label}.`,
+    url: context.url,
+    tag: `mention-${context.type}-${context.id}`
+  }, "Mention");
+}
+
+async function sendCalendarEventNotification(data, actorUserId, eventItem, isUpdate = false) {
+  if (!pushConfigured() || !data.pushSubscriptions.length) return;
+  const subscriptions = data.pushSubscriptions.filter((saved) => saved.userId !== actorUserId && normalizePushPreferences(saved.preferences).calendarAlerts);
+  const details = [
+    eventItem.date ? formatDisplayDate(eventItem.date) : "",
+    eventItem.opponent ? `vs ${eventItem.opponent}` : "",
+    eventItem.startTime || ""
+  ].filter(Boolean).join(" ");
+  await sendPushToSubscriptions(data, subscriptions, {
+    title: isUpdate ? "3FDP calendar updated" : "3FDP calendar event",
+    body: `${eventItem.title || "Bowling"}${details ? `: ${details}` : ""}`,
+    url: "/#calendar",
+    tag: `calendar-${eventItem.id}-${isUpdate ? "updated" : "created"}`
+  }, "Calendar");
 }
 
 exports.handler = async (event) => {
@@ -1342,6 +1446,7 @@ exports.handler = async (event) => {
         body: `${user.username} posted a team note.`,
         tag: `blog-post-${note.id}`
       });
+      await sendMentionNotifications(data, user.id, text, { label: "a blog post", type: "note", id: note.id, url: "/#home" });
       return json(201, { notes: sortedNotes(data), note: normalizeNote(note) });
     }
 
@@ -1355,6 +1460,7 @@ exports.handler = async (event) => {
       note.text = text;
       note.updatedAt = new Date().toISOString();
       await saveData(data);
+      await sendMentionNotifications(data, user.id, text, { label: "a blog post", type: "note", id: note.id, url: "/#home" });
       return json(200, { notes: sortedNotes(data) });
     }
 
@@ -1386,6 +1492,7 @@ exports.handler = async (event) => {
         body: `${user.username} replied to a team note.`,
         tag: `blog-reply-${note.id}`
       });
+      await sendMentionNotifications(data, user.id, text, { label: "a blog reply", type: "comment", id: comment.id, url: "/#home" });
       return json(201, { notes: sortedNotes(data), comment });
     }
 
@@ -1401,6 +1508,7 @@ exports.handler = async (event) => {
       comment.text = text;
       comment.updatedAt = new Date().toISOString();
       await saveData(data);
+      await sendMentionNotifications(data, user.id, text, { label: "a blog reply", type: "comment", id: comment.id, url: "/#home" });
       return json(200, { notes: sortedNotes(data), comment });
     }
 
@@ -1458,6 +1566,7 @@ exports.handler = async (event) => {
       data.chatMessages = [...(data.chatMessages || []), message].slice(-200);
       await saveData(data);
       await sendChatNotification(data, user.id, message);
+      await sendMentionNotifications(data, user.id, text, { label: "team chat", type: "chat", id: message.id, url: "/#home" });
       return json(201, { messages: sortedChatMessages(data), message });
     }
 
@@ -1476,15 +1585,17 @@ exports.handler = async (event) => {
     if (method === "GET" && route === "/calendar/events") return json(200, { events: visibleCalendarEvents(data) });
 
     if (method === "POST" && route === "/calendar/events") {
-      requireAdmin(event, data);
+      const admin = requireAdmin(event, data);
       const body = parseBody(event);
-      const rows = Array.isArray(body.events) ? body.events : [body];
-      const importId = Array.isArray(body.events) ? crypto.randomUUID() : "";
+      const bulkImport = Array.isArray(body.events);
+      const rows = bulkImport ? body.events : [body];
+      const importId = bulkImport ? crypto.randomUUID() : "";
       const existingKeys = new Set(data.calendarEvents.map(eventDuplicateKey));
       let importedCount = 0;
       let skippedDuplicateCount = 0;
       let invalidCount = 0;
       const savedEventIds = [];
+      const notificationEvents = [];
       for (const row of rows) {
         if (!ymdToDateParts(row.date)) {
           invalidCount += 1;
@@ -1505,8 +1616,12 @@ exports.handler = async (event) => {
           importedCount += 1;
         }
         savedEventIds.push(eventItem.id);
+        if (!bulkImport && !existing) notificationEvents.push({ eventItem, isUpdate: false });
       }
       await saveData(data);
+      for (const item of notificationEvents) {
+        await sendCalendarEventNotification(data, admin.id, item.eventItem, item.isUpdate);
+      }
       return json(200, {
         events: visibleCalendarEvents(data),
         importId: importedCount ? importId : "",
@@ -1555,6 +1670,19 @@ exports.handler = async (event) => {
         subRequests: visibleSubRequests(data),
         removedCount: removedEventIds.size
       });
+    }
+
+    if (method === "POST" && /^\/calendar\/events\/[^/]+\/lineup\/add-me$/.test(route)) {
+      const user = requireUser(event, data);
+      const eventId = decodeURIComponent(route.split("/")[3]);
+      const eventItem = data.calendarEvents.find((candidate) => candidate.id === eventId);
+      if (!eventItem) return json(404, { error: "Calendar event not found." });
+      if (!isSummerSweeperEvent(eventItem)) return json(403, { error: "This event does not allow self-added lineups." });
+      const bowlerName = userBowlerName(user);
+      if (!bowlerName) return json(400, { error: "Add your recap sheet name in User Options first." });
+      const added = addNameToEventLineup(eventItem, bowlerName);
+      if (added) await saveData(data);
+      return json(200, { events: visibleCalendarEvents(data), added, event: eventWithLineup(data, eventItem) });
     }
 
     if (method === "DELETE" && /^\/calendar\/events\/[^/]+$/.test(route)) {

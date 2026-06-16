@@ -17,7 +17,7 @@ const state = {
   regularLineup: [],
   pushConfigured: false,
   pushSubscribed: false,
-  pushPreferences: { subAlerts: true, blogAlerts: true, chatAlerts: true },
+  pushPreferences: { subAlerts: true, blogAlerts: true, chatAlerts: true, mentionAlerts: true, calendarAlerts: true },
   boardMode: "main",
   scoreMode: "bowlers",
   manualScoreEntryOpen: false,
@@ -332,6 +332,25 @@ function selectedCalendarEvent() {
   return state.events.find((eventItem) => eventItem.id === state.selectedCalendarEventId) || null;
 }
 
+function currentUserBowlerName() {
+  return String(state.user?.recapName || state.user?.username || "").trim();
+}
+
+function isSummerSweeperEvent(eventItem) {
+  return /summer\s*sweeper/i.test([
+    eventItem?.title,
+    eventItem?.leagueName,
+    eventItem?.opponent,
+    eventItem?.details
+  ].filter(Boolean).join(" "));
+}
+
+function eventLineupHasCurrentUser(eventItem) {
+  const bowlerName = currentUserBowlerName().toLowerCase();
+  if (!bowlerName) return false;
+  return (eventItem?.lineup || []).some((name) => String(name || "").trim().toLowerCase() === bowlerName);
+}
+
 function scoreRecapForDate(date) {
   return state.scoreRecaps.find((recap) => recap.date === date) || null;
 }
@@ -447,6 +466,7 @@ async function refreshAdmin() {
   const data = await api("/api/admin/users");
   state.adminUsers = data.users;
   renderAdmin();
+  renderEventRosterOptions();
 }
 
 async function refreshNotes() {
@@ -570,6 +590,8 @@ function renderPushControls(message = "") {
   $("#pushSubAlerts").checked = Boolean(state.pushPreferences.subAlerts);
   $("#pushBlogAlerts").checked = Boolean(state.pushPreferences.blogAlerts);
   $("#pushChatAlerts").checked = Boolean(state.pushPreferences.chatAlerts);
+  $("#pushMentionAlerts").checked = Boolean(state.pushPreferences.mentionAlerts);
+  $("#pushCalendarAlerts").checked = Boolean(state.pushPreferences.calendarAlerts);
   $("#enablePush").classList.toggle("hidden", state.pushSubscribed);
   $("#disablePush").classList.toggle("hidden", !state.pushSubscribed);
   $("#pushStatus").textContent = message || (state.pushSubscribed ? "Push notifications enabled." : "Push notifications off.");
@@ -591,7 +613,9 @@ function readPushPreferences() {
   return {
     subAlerts: Boolean($("#pushSubAlerts")?.checked),
     blogAlerts: Boolean($("#pushBlogAlerts")?.checked),
-    chatAlerts: Boolean($("#pushChatAlerts")?.checked)
+    chatAlerts: Boolean($("#pushChatAlerts")?.checked),
+    mentionAlerts: Boolean($("#pushMentionAlerts")?.checked),
+    calendarAlerts: Boolean($("#pushCalendarAlerts")?.checked)
   };
 }
 
@@ -708,19 +732,29 @@ function reactionKey(value) {
 
 function renderReactionControls(item, type, target) {
   const reactions = Array.isArray(item.reactions) ? item.reactions : [];
+  const counts = reactionChoices.map(({ key, label }) => {
+    const matches = reactions.filter((entry) => reactionKey(entry.reaction) === key);
+    return { key, label, count: matches.length };
+  }).filter((item) => item.count);
+  const summary = counts.length
+    ? counts.map((item) => `<span class="reaction-summary">${item.label}<b>${item.count}</b></span>`).join("")
+    : `<span class="reaction-summary-label">React</span>`;
   return `
-    <div class="reaction-row">
-      ${reactionChoices.map(({ key, label }) => {
-        const matches = reactions.filter((entry) => reactionKey(entry.reaction) === key);
-        const active = matches.some((entry) => entry.userId === state.user?.id);
-        const names = matches.map((entry) => entry.username).filter(Boolean).join(", ");
-        return `
-          <button class="reaction-button ${active ? "is-active" : ""}" type="button" data-react-type="${type}" data-react-target="${escapeHtml(target)}" data-reaction="${key}" title="${escapeHtml(names || label)}">
-            <span>${label}</span>${matches.length ? `<b>${matches.length}</b>` : ""}
-          </button>
-        `;
-      }).join("")}
-    </div>
+    <details class="reaction-picker">
+      <summary>${summary}</summary>
+      <div class="reaction-row">
+        ${reactionChoices.map(({ key, label }) => {
+          const matches = reactions.filter((entry) => reactionKey(entry.reaction) === key);
+          const active = matches.some((entry) => entry.userId === state.user?.id);
+          const names = matches.map((entry) => entry.username).filter(Boolean).join(", ");
+          return `
+            <button class="reaction-button ${active ? "is-active" : ""}" type="button" data-react-type="${type}" data-react-target="${escapeHtml(target)}" data-reaction="${key}" title="${escapeHtml(names || label)}">
+              <span>${label}</span>${matches.length ? `<b>${matches.length}</b>` : ""}
+            </button>
+          `;
+        }).join("")}
+      </div>
+    </details>
   `;
 }
 
@@ -951,19 +985,82 @@ function resetCalendarEventForm() {
   form.elements.practiceTime.value = state.config.practiceStartTime || "";
   form.querySelector("button[type='submit']").textContent = "Add event";
   $("#cancelEventEdit")?.classList.add("hidden");
+  renderEventRosterOptions();
+  updateEventLineupField();
+}
+
+function parseLineupText(value) {
+  return String(value || "").split(/[|;,]/).map((name) => name.trim()).filter(Boolean);
+}
+
+function eventRosterName(user) {
+  return String(user?.recapName || user?.username || "").trim();
+}
+
+function eventRosterLabel(user) {
+  const recapName = String(user?.recapName || "").trim();
+  const username = String(user?.username || "").trim();
+  if (recapName && username && recapName.toLowerCase() !== username.toLowerCase()) return `${recapName} (${username})`;
+  return recapName || username;
+}
+
+function eventRosterUsers() {
+  return [...(state.adminUsers || [])]
+    .map((user) => ({ ...user, rosterName: eventRosterName(user), rosterLabel: eventRosterLabel(user) }))
+    .filter((user) => user.rosterName)
+    .sort((a, b) => {
+      const typeSort = (a.bowlerType === "sub" ? 1 : 0) - (b.bowlerType === "sub" ? 1 : 0);
+      return typeSort || a.rosterName.localeCompare(b.rosterName);
+    });
+}
+
+function renderEventRosterOptions(selectedLineup = null) {
+  const list = $("#eventRosterList");
+  const form = $("#quickEventForm");
+  if (!list || !form) return;
+  const users = eventRosterUsers();
+  const selected = new Set((selectedLineup || parseLineupText(form.elements.lineup?.value || ""))
+    .map((name) => name.toLowerCase()));
+  const useDefaults = !selected.size && !state.editingCalendarEventId;
+  list.innerHTML = users.length
+    ? users.map((user) => {
+      const checked = useDefaults ? user.bowlerType !== "sub" : selected.has(user.rosterName.toLowerCase());
+      return `
+        <label class="roster-chip">
+          <input type="checkbox" value="${escapeHtml(user.rosterName)}" ${checked ? "checked" : ""}>
+          <span>${escapeHtml(user.rosterLabel)}${user.bowlerType === "sub" ? " (sub)" : ""}</span>
+        </label>
+      `;
+    }).join("")
+    : `<p class="hint">No users loaded yet. Use custom entries for now.</p>`;
+}
+
+function updateEventLineupField() {
+  const form = $("#quickEventForm");
+  if (!form?.elements.lineup) return;
+  const checkedNames = $$("#eventRosterList input[type='checkbox']:checked").map((input) => input.value);
+  const customNames = parseLineupText(form.elements.customLineup?.value || "");
+  form.elements.lineup.value = [...checkedNames, ...customNames].join(", ");
 }
 
 function editCalendarEvent(eventId) {
   const eventItem = state.events.find((item) => item.id === eventId);
   const form = $("#quickEventForm");
   if (!eventItem || !form) return toast("Calendar event not found.");
+  const lineup = eventItem.lineup || [];
+  const userNames = new Set(eventRosterUsers().map((user) => user.rosterName.toLowerCase()));
+  const customLineup = lineup.filter((name) => !userNames.has(String(name).toLowerCase()));
   state.editingCalendarEventId = eventId;
   form.elements.date.value = eventItem.date || "";
   form.elements.title.value = eventItem.title || "";
   form.elements.location.value = eventItem.location || "";
   form.elements.lane.value = eventItem.lane || "";
   form.elements.opponent.value = eventItem.opponent || "";
-  form.elements.lineup.value = eventItem.lineup?.join(", ") || "";
+  form.elements.details.value = eventItem.details || "";
+  form.elements.lineup.value = lineup.join(", ");
+  if (form.elements.customLineup) form.elements.customLineup.value = customLineup.join(", ");
+  renderEventRosterOptions(lineup);
+  updateEventLineupField();
   form.elements.startTime.value = eventItem.startTime || "";
   form.elements.practiceTime.value = eventItem.practiceTime || "";
   form.querySelector("button[type='submit']").textContent = "Save event";
@@ -978,6 +1075,7 @@ function renderSelectedCalendarEvent() {
   const request = state.subRequests.find((item) => item.eventId === eventItem.id);
   const recap = scoreRecapForDate(eventItem.date);
   const lineup = eventItem.lineup?.length ? eventItem.lineup : state.regularLineup;
+  const canSelfAdd = state.user && isSummerSweeperEvent(eventItem) && !eventLineupHasCurrentUser(eventItem);
   const adminControls = state.user?.role === "admin"
     ? `
       <button class="small ghost" type="button" data-edit-event="${eventItem.id}">Edit event</button>
@@ -992,11 +1090,13 @@ function renderSelectedCalendarEvent() {
         <p>${escapeHtml(formatDate(eventItem.date))} - practice ${escapeHtml(eventItem.practiceTime || "")}</p>
         <p>Start ${escapeHtml(eventItem.startTime || "")} - Lane ${escapeHtml(eventItem.lane || "TBD")} - ${escapeHtml(eventItem.opponent || "Opponent TBD")}</p>
         ${eventItem.location ? `<p>Location: ${escapeHtml(eventItem.location)}</p>` : ""}
+        ${eventItem.details ? `<p><strong>Details:</strong> ${escapeHtml(eventItem.details)}</p>` : ""}
         ${lineup?.length ? `<p><strong>Lineup:</strong> ${escapeHtml(lineup.join(", "))}</p>` : ""}
       </div>
       <div class="row-actions">
         <button class="small ghost" type="button" data-ics="${eventItem.id}">Add to Calendar</button>
         ${recap ? `<button class="small ghost" type="button" data-view-score-recap="${recap.id}">View recap</button>` : ""}
+        ${canSelfAdd ? `<button class="small" type="button" data-add-me-lineup="${eventItem.id}">Add me</button>` : ""}
         <button class="small" type="button" data-sub-request="${eventItem.id}">Need a sub</button>
         ${adminControls}
       </div>
@@ -1624,6 +1724,7 @@ function csvToEvents(text) {
       if (key === "opponent") row.opponent = value;
       if (key === "starttime") row.startTime = value;
       if (key === "practicetime") row.practiceTime = value;
+      if (["details", "eventdetails", "description", "notes", "note"].includes(key)) row.details = value;
       if (["lineup", "regularbowlers", "bowlers", "teamlineup"].includes(key)) row.lineup = value;
       if (/^bowler[1-5]$/.test(key) && value) row.lineup = [...(Array.isArray(row.lineup) ? row.lineup : []), value];
     });
@@ -1668,6 +1769,7 @@ function eventToIcsEntry(eventItem, method = "PUBLISH") {
   const practice = timeToIcs(eventItem.practiceTime || eventItem.startTime);
   const end = addMinutesToIcsTime(practice, 210);
   const lineup = eventItem.lineup?.length ? `; Lineup ${eventItem.lineup.join(", ")}` : "";
+  const details = eventItem.details ? `; Details ${eventItem.details}` : "";
   return [
     "BEGIN:VEVENT",
     `UID:${eventItem.id}@3fdp`,
@@ -1678,7 +1780,7 @@ function eventToIcsEntry(eventItem, method = "PUBLISH") {
     method === "CANCEL" ? "SEQUENCE:1" : "",
     `SUMMARY:${escapeIcs(eventItem.title || "Bowling")}`,
     eventItem.location ? `LOCATION:${escapeIcs(eventItem.location)}` : "",
-    `DESCRIPTION:${escapeIcs(`Start ${eventItem.startTime || ""}; Lane ${eventItem.lane || ""}; Opponent ${eventItem.opponent || ""}${eventItem.location ? `; Location ${eventItem.location}` : ""}${lineup}`)}`,
+    `DESCRIPTION:${escapeIcs(`Start ${eventItem.startTime || ""}; Lane ${eventItem.lane || ""}; Opponent ${eventItem.opponent || ""}${eventItem.location ? `; Location ${eventItem.location}` : ""}${lineup}${details}`)}`,
     "END:VEVENT"
   ].filter(Boolean).join("\r\n");
 }
@@ -1860,6 +1962,14 @@ $("#pushBlogAlerts").addEventListener("change", () => {
   if (state.pushSubscribed) savePushPreferences().catch((error) => toast(error.message));
 });
 $("#pushChatAlerts").addEventListener("change", () => {
+  state.pushPreferences = readPushPreferences();
+  if (state.pushSubscribed) savePushPreferences().catch((error) => toast(error.message));
+});
+$("#pushMentionAlerts").addEventListener("change", () => {
+  state.pushPreferences = readPushPreferences();
+  if (state.pushSubscribed) savePushPreferences().catch((error) => toast(error.message));
+});
+$("#pushCalendarAlerts").addEventListener("change", () => {
   state.pushPreferences = readPushPreferences();
   if (state.pushSubscribed) savePushPreferences().catch((error) => toast(error.message));
 });
@@ -2159,13 +2269,14 @@ $("#calendarList").addEventListener("click", async (event) => {
   const subButton = event.target.closest("[data-sub-request]");
   const responseButton = event.target.closest("[data-sub-response]");
   const icsButton = event.target.closest("[data-ics]");
+  const addMeLineupButton = event.target.closest("[data-add-me-lineup]");
   const viewRecapButton = event.target.closest("[data-view-score-recap]");
   const editEventButton = event.target.closest("[data-edit-event]");
   const deleteEventButton = event.target.closest("[data-delete-event]");
   const editSubButton = event.target.closest("[data-edit-sub-request]");
   const deleteSubButton = event.target.closest("[data-delete-sub-request]");
   const resendSubButton = event.target.closest("[data-resend-sub-request]");
-  const actionButton = subButton || responseButton || viewRecapButton || editEventButton || deleteEventButton || editSubButton || deleteSubButton || resendSubButton;
+  const actionButton = subButton || responseButton || icsButton || addMeLineupButton || viewRecapButton || editEventButton || deleteEventButton || editSubButton || deleteSubButton || resendSubButton;
   if (actionButton) actionButton.disabled = true;
   let previousEvents = null;
   let previousSubRequests = null;
@@ -2174,6 +2285,13 @@ $("#calendarList").addEventListener("click", async (event) => {
     if (icsButton) {
       const eventItem = state.events.find((item) => item.id === icsButton.dataset.ics);
       if (eventItem) downloadText(`${formatDate(eventItem.date)}-bowling.ics`, eventsToIcs([eventItem]));
+    }
+    if (addMeLineupButton) {
+      const data = await api(`/api/calendar/events/${addMeLineupButton.dataset.addMeLineup}/lineup/add-me`, { method: "POST" });
+      state.events = data.events || state.events;
+      await refreshCalendarAfterMutation(addMeLineupButton.dataset.addMeLineup);
+      toast(data.added ? "Added you to the lineup." : "You are already in the lineup.");
+      return;
     }
     if (viewRecapButton) {
       showScoreRecap(viewRecapButton.dataset.viewScoreRecap);
@@ -2274,10 +2392,19 @@ $("#downloadCancelIcs").addEventListener("click", () => {
 
 $("#cancelEventEdit").addEventListener("click", () => resetCalendarEventForm());
 
+$("#quickEventForm").addEventListener("change", (event) => {
+  if (event.target.closest("#eventRosterList")) updateEventLineupField();
+});
+
+$("#quickEventForm").addEventListener("input", (event) => {
+  if (event.target.name === "customLineup") updateEventLineupField();
+});
+
 $("#quickEventForm").addEventListener("submit", async (event) => {
   event.preventDefault();
   const form = event.currentTarget;
   try {
+    updateEventLineupField();
     const payload = Object.fromEntries(new FormData(form));
     const editingEventId = state.editingCalendarEventId;
     payload.title = String(payload.title || "").trim() || (payload.opponent ? `Bowling vs ${payload.opponent}` : "Bowling");

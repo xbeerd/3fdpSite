@@ -848,10 +848,35 @@ textarea:-webkit-autofill {
 .arsenal-editor {
   display: grid;
   gap: 0.65rem;
+  margin-top: 1rem;
   padding: 0.75rem;
   background: #f7f7f7;
   border: 1px solid var(--line);
   border-radius: 8px;
+}
+
+.arsenal-editor summary {
+  cursor: pointer;
+  color: var(--text);
+  font-weight: 850;
+  list-style-position: outside;
+}
+
+.arsenal-editor summary span {
+  display: inline-grid;
+  gap: 0.22rem;
+  vertical-align: top;
+}
+
+.arsenal-editor summary em {
+  color: var(--muted);
+  font-size: 0.82rem;
+  font-style: normal;
+  font-weight: 750;
+}
+
+.arsenal-tools {
+  margin-top: 0.75rem;
 }
 
 .arsenal-list {

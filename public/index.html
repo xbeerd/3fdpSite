@@ -41,7 +41,8 @@
       <div id="menuUserSummary" class="menu-user-summary hidden"></div>
       <button data-view="home" type="button">Blog</button>
       <button data-view="calendar" type="button">Calendar</button>
-      <button data-view="scores" type="button">Scores</button>
+      <button data-view="scores" type="button">Recap Entry</button>
+      <button data-view="performanceLogs" type="button">Performance Logs</button>
       <button data-view="loser" type="button">Biggest Loser</button>
       <button data-view="options" type="button" class="user-only hidden">Options</button>
       <button data-view="admin" type="button" class="admin-only hidden">Admin</button>
@@ -117,16 +118,6 @@
                 <option value="sub">Sub bowler</option>
               </select>
             </label>
-            <section class="arsenal-editor">
-              <div class="section-heading compact-heading">
-                <div>
-                  <strong>Bowling ball arsenal</strong>
-                  <p class="muted">Save up to 10 balls with delivery notes for future lane-coach suggestions.</p>
-                </div>
-                <button id="addArsenalBall" class="ghost small" type="button">Add ball</button>
-              </div>
-              <div id="arsenalList" class="arsenal-list"></div>
-            </section>
             <div class="settings-row">
               <div>
                 <strong>Push Notifications</strong>
@@ -150,6 +141,19 @@
             </div>
           </form>
           <p id="profileStatus" class="action-status hidden"></p>
+          <details id="arsenalDetails" class="arsenal-editor">
+            <summary>
+              <span>
+                <strong>Bowling ball arsenal</strong>
+                <em>Save up to 10 balls with delivery notes for future lane-coach suggestions.</em>
+              </span>
+            </summary>
+            <div class="section-heading compact-heading arsenal-tools">
+              <div></div>
+              <button id="addArsenalBall" class="ghost small" type="button">Add ball</button>
+            </div>
+            <div id="arsenalList" class="arsenal-list"></div>
+          </details>
         </section>
       </section>
 
@@ -267,7 +271,7 @@
           <div class="section-heading">
             <div>
               <p class="eyebrow">Scores</p>
-              <h2>Weekly recaps</h2>
+              <h2>Recap entry</h2>
               <p class="muted">Raw games are stored. Series, averages, handicaps, and margins are calculated.</p>
             </div>
             <button id="newScoreRecap" class="user-only hidden" type="button">New recap</button>
@@ -314,11 +318,13 @@
           </form>
           <p id="scoreStatus" class="action-status hidden"></p>
         </section>
+      </section>
 
+      <section id="performanceLogsView" class="view hidden">
         <section class="panel">
           <div class="section-heading">
             <div>
-              <p id="scoreViewEyebrow" class="eyebrow">Bowler Log</p>
+              <p id="scoreViewEyebrow" class="eyebrow">Performance Logs</p>
               <h2 id="scoreViewTitle">3FDP performance</h2>
             </div>
             <div id="scoreModeControls" class="segmented" role="group" aria-label="Score view">
@@ -362,6 +368,7 @@
               </table>
             </div>
           </div>
+          <p id="scoreLogStatus" class="action-status hidden"></p>
         </section>
       </section>
 

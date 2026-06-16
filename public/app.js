@@ -79,6 +79,11 @@ function setActionStatus(selector, message) {
   node.classList.toggle("hidden", !message);
 }
 
+function setScoreActionStatus(message) {
+  setActionStatus("#scoreStatus", message);
+  setActionStatus("#scoreLogStatus", message);
+}
+
 function updateUndoImportButton() {
   const button = $("#undoCsvImport");
   if (!button) return;
@@ -156,7 +161,7 @@ function routeFromHash() {
   const value = window.location.hash.replace("#", "");
   const [view, query = ""] = value.split("?");
   return {
-    view: ["home", "calendar", "scores", "loser", "options", "admin"].includes(view) ? view : "",
+    view: ["home", "calendar", "scores", "performanceLogs", "loser", "options", "admin"].includes(view) ? view : "",
     params: new URLSearchParams(query)
   };
 }
@@ -410,7 +415,7 @@ function showScoreRecap(recapId) {
   if (!recap) return toast("Score recap not found.");
   state.scoreMode = "recaps";
   state.selectedScoreWeek = String(recap.week || "");
-  setView("scores");
+  setView("performanceLogs");
   renderScores();
   const node = document.querySelector(`[data-score-recap-id="${CSS.escape(recapId)}"]`);
   if (node) {
@@ -602,6 +607,10 @@ async function refreshCurrentView() {
     await refreshScores();
     return;
   }
+  if (state.view === "performanceLogs") {
+    await refreshScores();
+    return;
+  }
   if (state.view === "loser") {
     await refreshWeightsAndBoard();
     return;
@@ -676,6 +685,9 @@ function renderArsenalEditor(arsenal = []) {
         <label>Typical RPM <input name="arsenalRpm" type="text" maxlength="40" value="${escapeHtml(item.rpm || "")}" placeholder="350 rpm"></label>
       </div>
       <label>Delivery notes <textarea name="arsenalNotes" rows="3" maxlength="600" placeholder="Pin position, drilling info, starting spot, target, release notes">${escapeHtml(item.notes || "")}</textarea></label>
+      <div class="row-actions">
+        <button class="small" type="button" data-save-arsenal="${index}">Save ball</button>
+      </div>
     </article>
   `).join("");
   $("#addArsenalBall")?.classList.toggle("hidden", rows.length >= 10);
@@ -708,6 +720,33 @@ function readPushPreferences() {
     mentionAlerts: Boolean($("#pushMentionAlerts")?.checked),
     calendarAlerts: Boolean($("#pushCalendarAlerts")?.checked)
   };
+}
+
+function profilePayloadFromForm() {
+  const form = $("#profileForm");
+  const payload = form ? Object.fromEntries(new FormData(form)) : {};
+  payload.recapName = String(payload.recapName ?? state.user?.recapName ?? "").trim();
+  payload.bowlerType = payload.bowlerType || state.user?.bowlerType || "regular";
+  payload.arsenal = readArsenalEditor();
+  delete payload.arsenalBall;
+  delete payload.arsenalWeight;
+  delete payload.arsenalSpeed;
+  delete payload.arsenalRpm;
+  delete payload.arsenalNotes;
+  return payload;
+}
+
+async function saveProfilePayload(payload, successMessage) {
+  const requestedRecapName = String(payload.recapName || "").trim();
+  await api("/api/profile", { method: "POST", body: JSON.stringify(payload) });
+  const me = await api("/api/me");
+  state.user = me.user;
+  if (String(state.user?.recapName || "") !== requestedRecapName) {
+    throw new Error("Recap sheet name did not save. Please try again.");
+  }
+  renderProfileOptions();
+  setActionStatus("#profileStatus", successMessage);
+  toast(successMessage);
 }
 
 async function savePushPreferences(message = "Push notification options saved.") {
@@ -1589,6 +1628,7 @@ function setManualScoreEntryOpen(open) {
 }
 
 function showScoreForm(recap = null) {
+  setView("scores");
   const form = $("#scoreRecapForm");
   form.classList.remove("hidden");
   state.editingScoreRecapId = recap?.id || "";
@@ -1756,7 +1796,7 @@ function renderScores() {
     button.classList.toggle("is-active", button.dataset.scoreMode === state.scoreMode);
   });
   $$(".prize-mode-button").forEach((button) => button.classList.toggle("hidden", !canViewPrize));
-  $("#scoreViewEyebrow").textContent = state.scoreMode === "recaps" ? "Recap Log" : state.scoreMode === "prize" ? "Prize Money" : "Bowler Log";
+  $("#scoreViewEyebrow").textContent = "Performance Logs";
   $("#scoreViewTitle").textContent = state.scoreMode === "recaps" ? "Matches" : state.scoreMode === "prize" ? "Prize money distribution" : "3FDP performance";
   $("#bowlerLogPanel").classList.toggle("hidden", state.scoreMode !== "bowlers");
   $("#recapLogPanel").classList.toggle("hidden", state.scoreMode !== "recaps");
@@ -2329,11 +2369,26 @@ $("#addArsenalBall").addEventListener("click", () => {
 });
 $("#arsenalList").addEventListener("click", (event) => {
   const remove = event.target.closest("[data-remove-arsenal]");
-  if (!remove) return;
-  const index = Number(remove.dataset.removeArsenal);
-  const arsenal = readArsenalCards();
-  arsenal.splice(index, 1);
-  renderArsenalEditor(arsenal);
+  const save = event.target.closest("[data-save-arsenal]");
+  if (remove) {
+    const index = Number(remove.dataset.removeArsenal);
+    const arsenal = readArsenalCards();
+    arsenal.splice(index, 1);
+    renderArsenalEditor(arsenal);
+    return;
+  }
+  if (save) {
+    const button = save;
+    button.disabled = true;
+    saveProfilePayload(profilePayloadFromForm(), "Bowling ball saved.")
+      .catch((error) => {
+        setActionStatus("#profileStatus", error.message);
+        toast(error.message);
+      })
+      .finally(() => {
+        if (button.isConnected) button.disabled = false;
+      });
+  }
 });
 $("#prevMonth").addEventListener("click", () => moveCalendarMonth(-1));
 $("#nextMonth").addEventListener("click", () => moveCalendarMonth(1));
@@ -2342,25 +2397,10 @@ $("#profileForm").addEventListener("submit", async (event) => {
   event.preventDefault();
   const form = event.currentTarget;
   const submit = form.querySelector("button[type='submit']");
-  const payload = Object.fromEntries(new FormData(form));
-  payload.arsenal = readArsenalEditor();
-  delete payload.arsenalBall;
-  delete payload.arsenalWeight;
-  delete payload.arsenalSpeed;
-  delete payload.arsenalRpm;
-  delete payload.arsenalNotes;
-  const requestedRecapName = String(payload.recapName || "").trim();
+  const payload = profilePayloadFromForm();
   if (submit) submit.disabled = true;
   try {
-    await api("/api/profile", { method: "POST", body: JSON.stringify(payload) });
-    const me = await api("/api/me");
-    state.user = me.user;
-    if (String(state.user?.recapName || "") !== requestedRecapName) {
-      throw new Error("Recap sheet name did not save. Please try again.");
-    }
-    renderProfileOptions();
-    setActionStatus("#profileStatus", "Options saved.");
-    toast("Options saved.");
+    await saveProfilePayload(payload, "Options saved.");
   } catch (error) {
     setActionStatus("#profileStatus", error.message);
     toast(error.message);
@@ -3021,10 +3061,10 @@ $("#scoreRecapForm").addEventListener("submit", async (event) => {
     applyScoreDashboard(data);
     hideScoreForm();
     renderScores();
-    setActionStatus("#scoreStatus", "Score recap saved.");
+    setScoreActionStatus("Score recap saved.");
     toast("Score recap saved.");
   } catch (error) {
-    setActionStatus("#scoreStatus", error.message);
+    setScoreActionStatus(error.message);
     toast(error.message);
   } finally {
     if (submit?.isConnected) submit.disabled = false;
@@ -3074,7 +3114,7 @@ $("#scoreRecaps").addEventListener("click", async (event) => {
       applyScoreDashboard(data);
       renderScores();
       const warningText = scan.warnings?.length ? ` ${scan.warnings.join(" ")}` : "";
-      setActionStatus("#scoreStatus", "Score recap rescanned.");
+      setScoreActionStatus("Score recap rescanned.");
       toast(`Score recap rescanned.${warningText}`);
       if (rescan.isConnected) rescan.textContent = originalText;
       return;
@@ -3086,7 +3126,7 @@ $("#scoreRecaps").addEventListener("click", async (event) => {
       const data = await api(`/api/scores/recaps/${recapId}`, { method: "DELETE" });
       applyScoreDashboard(data);
       renderScores();
-      setActionStatus("#scoreStatus", "Score recap deleted.");
+      setScoreActionStatus("Score recap deleted.");
       toast("Score recap deleted.");
     }
   } catch (error) {
@@ -3095,7 +3135,7 @@ $("#scoreRecaps").addEventListener("click", async (event) => {
     state.prizeRows = previousPrizeRows;
     state.totalPaidGames = previousTotalPaidGames;
     renderScores();
-    setActionStatus("#scoreStatus", error.message);
+    setScoreActionStatus(error.message);
     toast(error.message);
   } finally {
     if (actionButton?.isConnected) actionButton.disabled = false;

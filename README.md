@@ -81,14 +81,14 @@ OPENAI_SCORE_MODEL
 Supported headers:
 
 ```text
-date,lane,opponent,startTime,practiceTime
+Date,Location,League Name,Lane,Opponent,Start Time,Practice Time,Details,Bowler 1,Bowler 2,Bowler 3,Bowler 4,Bowler 5
 ```
 
 Example:
 
 ```text
-date,lane,opponent,startTime,practiceTime
-2026-09-03,12,Pin Crushers,18:30,18:15
+Date,Location,League Name,Lane,Opponent,Start Time,Practice Time,Details,Bowler 1,Bowler 2,Bowler 3,Bowler 4,Bowler 5
+2026-09-03,Example Lanes,Thursday Mixers,12,Pin Crushers,18:30,18:15,Theme night,Scott Pergande,Nick Mittermann,Mike Steinke,Ron Stewart,Travis Antoniewicz
 ```
 
 ## Calendar Downloads

@@ -121,7 +121,10 @@
             <div id="notePhotoPreview" class="note-photo-preview hidden"></div>
             <button type="submit">Post note</button>
           </form>
-          <div id="subSummary" class="summary-list"></div>
+          <div id="subSummaryPanel" class="sub-summary-panel">
+            <button id="toggleSubSummary" class="ghost sub-summary-toggle" type="button" aria-expanded="false">Show sub updates</button>
+            <div id="subSummary" class="summary-list hidden"></div>
+          </div>
           <div id="notesList" class="feed"></div>
         </section>
       </section>
@@ -411,7 +414,7 @@
         <section class="panel">
           <p class="eyebrow">Schedule Upload</p>
           <h2>CSV schedule import</h2>
-          <p class="hint">CSV headers: Date, Location, League Name, Lane, Opponent, Start time, Practice Time, Location</p>
+          <p class="hint">CSV headers: Date, Location, League Name, Lane, Opponent, Start Time, Practice Time, Details, Bowler 1, Bowler 2, Bowler 3, Bowler 4, Bowler 5</p>
           <form id="csvForm" class="form">
             <label>Schedule CSV <input name="csv" type="file" accept=".csv,text/csv"></label>
             <div class="row-actions">
@@ -482,7 +485,10 @@
       <div id="chatPanel" class="chat-panel hidden">
         <div class="chat-header">
           <strong>Team chat</strong>
-          <button id="chatClose" class="ghost small" type="button">Close</button>
+          <div class="chat-header-actions">
+            <button id="chatFullscreen" class="ghost small" type="button" aria-pressed="false">Full screen</button>
+            <button id="chatClose" class="ghost small" type="button">Close</button>
+          </div>
         </div>
         <div id="chatMessages" class="chat-messages"></div>
         <form id="chatForm" class="chat-form">

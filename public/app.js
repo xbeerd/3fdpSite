@@ -5,6 +5,8 @@ const state = {
   notes: [],
   chatMessages: [],
   chatOpen: false,
+  chatFullscreen: false,
+  showSubSummary: false,
   notifications: [],
   notificationOpen: false,
   events: [],
@@ -625,11 +627,27 @@ async function refreshNotes() {
   renderHome();
 }
 
+function chatMessagesSignature(messages = []) {
+  return messages.map((message) => [
+    message.id,
+    message.createdAt,
+    message.updatedAt,
+    message.imageExpiredAt,
+    (message.reactions || []).map((reaction) => `${reaction.userId}:${reaction.reaction}`).sort().join(",")
+  ].join("|")).join("~");
+}
+
+function setChatMessages(messages = []) {
+  const next = messages || [];
+  const changed = chatMessagesSignature(next) !== chatMessagesSignature(state.chatMessages);
+  state.chatMessages = next;
+  return changed;
+}
+
 async function refreshChatMessages(options = {}) {
   if (!state.user) return;
   const data = await api("/api/chat/messages");
-  state.chatMessages = data.messages || [];
-  renderChat(options);
+  if (setChatMessages(data.messages || [])) renderChat(options);
 }
 
 async function refreshNotifications({ open = state.notificationOpen, markSeen = false } = {}) {
@@ -646,13 +664,13 @@ async function refreshNotifications({ open = state.notificationOpen, markSeen = 
   state.subRequests = bootstrap.subRequests;
   state.notes = bootstrap.notes;
   state.regularLineup = bootstrap.regularLineup || state.regularLineup || [];
-  state.chatMessages = chat.messages || [];
+  const chatChanged = setChatMessages(chat.messages || []);
   ensureNotificationBaselines();
   state.notifications = buildNotifications();
   state.notificationOpen = open;
   renderNotifications();
   if (state.chatOpen) {
-    renderChat();
+    if (chatChanged) renderChat();
     markChatNotificationsSeen();
     state.notifications = buildNotifications();
     renderNotifications();
@@ -923,6 +941,16 @@ async function disablePushAlerts() {
 }
 
 function renderHome() {
+  const openSubCount = state.subRequests.filter((request) => !request.responses?.find((item) => item.response === "can")).length;
+  const filledSubCount = state.subRequests.length - openSubCount;
+  const toggle = $("#toggleSubSummary");
+  if (toggle) {
+    const countText = state.subRequests.length ? ` (${state.subRequests.length})` : "";
+    const statusText = openSubCount ? ` - ${openSubCount} need${openSubCount === 1 ? "s" : ""} sub` : (filledSubCount ? " - all filled" : "");
+    toggle.textContent = `${state.showSubSummary ? "Hide" : "Show"} sub updates${countText}${statusText}`;
+    toggle.setAttribute("aria-expanded", String(state.showSubSummary));
+  }
+  $("#subSummary")?.classList.toggle("hidden", !state.showSubSummary);
   $("#subSummary").innerHTML = state.subRequests.length
     ? state.subRequests.map((request) => {
       const confirmed = request.responses?.find((item) => item.response === "can");
@@ -939,8 +967,9 @@ function renderHome() {
     }).join("")
     : `<p class="hint">No open sub requests right now.</p>`;
 
-  $("#notesList").innerHTML = state.notes.length
-    ? state.notes.map(renderNote).join("")
+  const blogNotes = state.notes.filter((note) => !String(note.systemKey || "").startsWith("sub-"));
+  $("#notesList").innerHTML = blogNotes.length
+    ? blogNotes.map(renderNote).join("")
     : `<p class="empty">No notes yet.</p>`;
   renderPushControls();
 }
@@ -991,8 +1020,11 @@ function renderChat(options = {}) {
   const messages = $("#chatMessages");
   const wasNearBottom = !messages || (messages.scrollHeight - messages.scrollTop - messages.clientHeight < 48);
   chat.classList.toggle("hidden", !state.user);
+  chat.classList.toggle("is-fullscreen", state.chatFullscreen);
   $("#chatPanel").classList.toggle("hidden", !state.chatOpen);
   $("#chatToggle").setAttribute("aria-expanded", String(state.chatOpen));
+  $("#chatFullscreen").textContent = state.chatFullscreen ? "Float" : "Full screen";
+  $("#chatFullscreen").setAttribute("aria-pressed", String(state.chatFullscreen));
   messages.innerHTML = state.chatMessages.length
     ? state.chatMessages.map((message) => `
       <article class="chat-message ${message.userId === state.user?.id ? "is-mine" : ""}" data-chat-message="${escapeHtml(message.id)}" ${message.userId === state.user?.id ? 'data-chat-owned="true" title="Press and hold to delete"' : ""}>
@@ -1041,12 +1073,12 @@ async function deleteChatMessage(messageId) {
   renderChat();
   try {
     const data = await api(`/api/chat/messages/${encodeURIComponent(messageId)}`, { method: "DELETE" });
-    state.chatMessages = data.messages || state.chatMessages;
+    setChatMessages(data.messages || state.chatMessages);
     renderChat();
     await refreshNotifications();
     toast("Chat message deleted.");
   } catch (error) {
-    state.chatMessages = previousMessages;
+    setChatMessages(previousMessages);
     renderChat();
     toast(error.message);
   }
@@ -1055,7 +1087,7 @@ async function deleteChatMessage(messageId) {
 async function toggleReaction(type, target, reaction) {
   if (type === "chat") {
     const data = await api(`/api/chat/messages/${encodeURIComponent(target)}/reactions`, { method: "POST", body: JSON.stringify({ reaction }) });
-    state.chatMessages = data.messages || state.chatMessages;
+    setChatMessages(data.messages || state.chatMessages);
     renderChat();
     return;
   }
@@ -1222,6 +1254,18 @@ function openCommentEditor(noteId, commentId) {
     </form>
   `);
   article.querySelector("[data-edit-comment-form] .rich-editor")?.focus();
+}
+
+function focusComment(noteId, commentId) {
+  const noteNode = document.querySelector(`[data-note-id="${CSS.escape(noteId)}"]`);
+  const comments = noteNode?.querySelector(".comments");
+  if (comments) comments.open = true;
+  const commentNode = noteNode?.querySelector(`[data-comment-id="${CSS.escape(commentId)}"]`);
+  if (!commentNode) return;
+  commentNode.classList.remove("is-collapsed");
+  commentNode.classList.add("is-highlighted");
+  commentNode.scrollIntoView({ behavior: "smooth", block: "center" });
+  setTimeout(() => commentNode.classList.remove("is-highlighted"), 3200);
 }
 
 function renderCalendar() {
@@ -2173,7 +2217,7 @@ function csvToEvents(text) {
       const key = keyForHeader(header);
       if (key === "date") row.date = normalizeCsvDate(value);
       if (key === "location" && value && !row.location) row.location = value;
-      if (key === "leaguename") row.leagueName = value;
+      if (["leaguename", "eventleaguename", "leagueeventname", "eventname", "title"].includes(key)) row.leagueName = value;
       if (key === "lane") row.lane = value;
       if (key === "opponent") row.opponent = value;
       if (key === "starttime") row.startTime = value;
@@ -2328,8 +2372,14 @@ $("#chatToggle").addEventListener("click", async () => {
     renderNotifications();
   }
 });
+$("#chatFullscreen").addEventListener("click", () => {
+  state.chatFullscreen = !state.chatFullscreen;
+  state.chatOpen = true;
+  renderChat({ forceScroll: true });
+});
 $("#chatClose").addEventListener("click", () => {
   state.chatOpen = false;
+  state.chatFullscreen = false;
   renderChat();
 });
 $("#chatForm").addEventListener("submit", async (event) => {
@@ -2341,7 +2391,7 @@ $("#chatForm").addEventListener("submit", async (event) => {
   if (submit) submit.disabled = true;
   try {
     const data = await api("/api/chat/messages", { method: "POST", body: JSON.stringify({ text, imageDataUrl: state.chatPhotoDataUrl }) });
-    state.chatMessages = data.messages || state.chatMessages;
+    setChatMessages(data.messages || state.chatMessages);
     state.chatPhotoDataUrl = "";
     form.reset();
     renderChat({ forceScroll: true });
@@ -2439,6 +2489,10 @@ $("#subSummary").addEventListener("click", async (event) => {
   if (!button) return;
   await refreshBootstrap();
   showCalendarEvent(button.dataset.openSubEvent);
+});
+$("#toggleSubSummary").addEventListener("click", () => {
+  state.showSubSummary = !state.showSubSummary;
+  renderHome();
 });
 $("#enablePush").addEventListener("click", () => enablePushAlerts().catch((error) => toast(error.message)));
 $("#disablePush").addEventListener("click", () => disablePushAlerts().catch((error) => toast(error.message)));
@@ -2800,6 +2854,7 @@ $("#notesList").addEventListener("submit", async (event) => {
         ? { ...note, comments: (note.comments || []).map((comment) => comment.id === optimisticComment.id ? data.comment : comment) }
         : note);
       renderHome();
+      focusComment(noteId, data.comment.id);
     }
     toast("Reply posted.");
   } catch (error) {

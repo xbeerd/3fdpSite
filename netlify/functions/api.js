@@ -27,6 +27,7 @@ const defaultData = {
     weighInHour: 18,
     timeZone: TIME_ZONE,
     prizeMoneyPublic: false,
+    seasonCalendarToolsPublic: false,
     chatImageRetentionDays: 30
   },
   users: [],
@@ -1407,6 +1408,7 @@ exports.handler = async (event) => {
         ...data.config,
         ...body,
         prizeMoneyPublic: normalizeBoolean(body.prizeMoneyPublic, false),
+        seasonCalendarToolsPublic: normalizeBoolean(body.seasonCalendarToolsPublic, false),
         chatImageRetentionDays: Math.max(0, Math.min(365, Math.round(Number(body.chatImageRetentionDays) || 0)))
       };
       await saveData(data);

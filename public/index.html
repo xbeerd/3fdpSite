@@ -110,8 +110,7 @@
                     <option value="24px">Huge</option>
                   </select>
                   <input data-rich-color type="color" value="#151515" aria-label="Text color">
-                  <button class="ghost small" type="button" data-rich-action="insertUnorderedList">Bullets</button>
-                  <button class="ghost small" type="button" data-rich-action="insertOrderedList">Numbers</button>
+                  <button class="ghost small" type="button" data-rich-list-toggle>List: off</button>
                 </div>
                 <div class="rich-editor" contenteditable="true" data-rich-input="text" data-placeholder="Practice updates, sub notes, bowling chatter..."></div>
                 <input name="text" type="hidden">
@@ -189,8 +188,8 @@
             </div>
             <div class="row-actions">
               <button id="downloadAllIcs" type="button" class="ghost">Add Season to Calendar</button>
-              <button id="downloadUpdateIcs" type="button" class="ghost">Update Season Calendar</button>
-              <button id="downloadCancelIcs" type="button" class="ghost">Remove Season from Calendar</button>
+              <button id="downloadUpdateIcs" type="button" class="ghost season-calendar-tool hidden">Update Season Calendar</button>
+              <button id="downloadCancelIcs" type="button" class="ghost season-calendar-tool hidden">Remove Season from Calendar</button>
             </div>
           </div>
           <div class="calendar-toolbar">
@@ -362,8 +361,8 @@
               <button id="clearBowlerFilter" class="ghost small hidden" type="button">Show all bowlers</button>
             </div>
             <div class="table-wrap score-table-wrap">
-              <table>
-                <thead><tr><th>Bowler</th><th>Games</th><th>High Game</th><th>High Series</th><th>Average</th><th>HDCP</th></tr></thead>
+              <table class="bowler-log-table">
+                <thead><tr><th>Bowler</th><th>Gms</th><th>Hi G</th><th>Hi S</th><th>Avg</th><th>Hdcp</th></tr></thead>
                 <tbody id="bowlerStats"></tbody>
               </table>
             </div>
@@ -406,6 +405,7 @@
             <label>Contest end <input name="contestEndDate" type="date"></label>
             <label>Chat image expiry days <input name="chatImageRetentionDays" type="number" min="0" max="365" step="1"></label>
             <label class="check-row"><input name="prizeMoneyPublic" type="checkbox"> Show prize money to users</label>
+            <label class="check-row"><input name="seasonCalendarToolsPublic" type="checkbox"> Show season update/remove calendar buttons to users</label>
             <button type="submit">Save setup</button>
           </form>
           <p id="configStatus" class="action-status hidden"></p>

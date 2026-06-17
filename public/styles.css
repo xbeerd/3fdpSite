@@ -1173,6 +1173,26 @@ td .muted { display: block; margin-top: 0.2rem; font-size: 0.8rem; }
   font-size: 0.84rem;
 }
 
+.bowler-log-table {
+  table-layout: fixed;
+}
+
+.bowler-log-table th,
+.bowler-log-table td {
+  padding: 0.52rem 0.28rem;
+  font-size: 0.78rem;
+}
+
+.bowler-log-table th:first-child,
+.bowler-log-table td:first-child {
+  width: 28%;
+}
+
+.bowler-log-table .text-button {
+  font-size: 0.78rem;
+  line-height: 1.15;
+}
+
 .bowler-detail-panel {
   display: grid;
   gap: 0.7rem;
@@ -1691,12 +1711,15 @@ td .muted { display: block; margin-top: 0.2rem; font-size: 0.8rem; }
     padding-inline: 0.72rem;
   }
   .section-heading { display: grid; }
-  .feed-heading { display: grid; }
+  .feed-heading {
+    display: flex;
+    align-items: start;
+  }
   .comment-item .feed-heading {
     display: flex;
     align-items: start;
   }
-  .note-actions { justify-content: stretch; }
+  .note-actions { justify-content: end; }
   .comment-item .note-actions {
     justify-content: end;
   }
@@ -1756,6 +1779,17 @@ td .muted { display: block; margin-top: 0.2rem; font-size: 0.8rem; }
     line-height: 1;
   }
   table { min-width: 400px; }
+  .bowler-log-table {
+    min-width: 330px;
+  }
+  .bowler-log-table th,
+  .bowler-log-table td {
+    padding: 0.46rem 0.2rem;
+    font-size: 0.72rem;
+  }
+  .bowler-log-table .text-button {
+    font-size: 0.72rem;
+  }
   th, td { padding: 0.72rem 0.55rem; }
   .graph-wrap svg { min-width: 440px; }
   .score-entry-grid,
@@ -1853,6 +1887,9 @@ td .muted { display: block; margin-top: 0.2rem; font-size: 0.8rem; }
     grid-template-columns: repeat(3, minmax(0, 1fr));
   }
   table { min-width: 360px; }
+  .bowler-log-table {
+    min-width: 320px;
+  }
   .graph-wrap svg { min-width: 380px; }
   .score-basic-grid {
     grid-template-columns: minmax(0, 1fr) 88px;

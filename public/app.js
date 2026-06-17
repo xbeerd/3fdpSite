@@ -5,7 +5,7 @@ const state = {
   notes: [],
   chatMessages: [],
   chatOpen: false,
-  chatFullscreen: false,
+  chatFullscreen: localStorage.getItem("chatDisplayMode") === "fullscreen",
   showSubSummary: false,
   notifications: [],
   notificationOpen: false,
@@ -125,8 +125,7 @@ function richEditorMarkup(name, value = "", placeholder = "Write something...") 
           <option value="24px">Huge</option>
         </select>
         <input data-rich-color type="color" value="#151515" aria-label="Text color">
-        <button class="ghost small" type="button" data-rich-action="insertUnorderedList">Bullets</button>
-        <button class="ghost small" type="button" data-rich-action="insertOrderedList">Numbers</button>
+        <button class="ghost small" type="button" data-rich-list-toggle>List: off</button>
       </div>
       <div class="rich-editor" contenteditable="true" data-rich-input="${escapeHtml(name)}" data-placeholder="${escapeHtml(placeholder)}">${sanitizeRichText(value)}</div>
       <input name="${escapeHtml(name)}" type="hidden" value="${escapeHtml(sanitizeRichText(value))}">
@@ -141,12 +140,27 @@ function syncRichEditors(scope = document) {
   });
 }
 
+function updateRichListButton(wrap, mode) {
+  const button = wrap?.querySelector("[data-rich-list-toggle]");
+  if (!button) return;
+  button.dataset.listMode = mode || "none";
+  button.textContent = mode === "bullet" ? "List: bullets" : mode === "number" ? "List: numbers" : "List: off";
+}
+
 function applyRichCommand(control) {
   const wrap = control.closest(".rich-editor-wrap");
   const editor = wrap?.querySelector(".rich-editor");
   if (!editor) return;
   editor.focus();
-  if (control.matches("[data-rich-size]")) {
+  if (control.matches("[data-rich-list-toggle]")) {
+    const current = control.dataset.listMode || "none";
+    const next = current === "none" ? "bullet" : current === "bullet" ? "number" : "none";
+    if (current === "bullet") document.execCommand("insertUnorderedList", false, null);
+    if (current === "number") document.execCommand("insertOrderedList", false, null);
+    if (next === "bullet") document.execCommand("insertUnorderedList", false, null);
+    if (next === "number") document.execCommand("insertOrderedList", false, null);
+    updateRichListButton(wrap, next);
+  } else if (control.matches("[data-rich-size]")) {
     document.execCommand("fontSize", false, "4");
     editor.querySelectorAll("font[size='4']").forEach((font) => {
       const span = document.createElement("span");
@@ -306,9 +320,8 @@ function renderMenuUserSummary() {
     node.innerHTML = "";
     return;
   }
-  const recapName = String(state.user.recapName || "").trim();
   const username = String(state.user.username || "").trim();
-  const secondary = recapName && recapName.toLowerCase() !== username.toLowerCase() ? `Recap: ${recapName}` : state.user.role || "";
+  const secondary = state.user.role || "";
   node.innerHTML = `
     <span>Signed in as</span>
     <strong>${escapeHtml(username || "User")}</strong>
@@ -642,6 +655,11 @@ function setChatMessages(messages = []) {
   const changed = chatMessagesSignature(next) !== chatMessagesSignature(state.chatMessages);
   state.chatMessages = next;
   return changed;
+}
+
+function setChatFullscreen(enabled) {
+  state.chatFullscreen = Boolean(enabled);
+  localStorage.setItem("chatDisplayMode", state.chatFullscreen ? "fullscreen" : "floating");
 }
 
 async function refreshChatMessages(options = {}) {
@@ -1269,6 +1287,8 @@ function focusComment(noteId, commentId) {
 }
 
 function renderCalendar() {
+  const showSeasonTools = state.user?.role === "admin" || Boolean(state.config.seasonCalendarToolsPublic);
+  $$(".season-calendar-tool").forEach((button) => button.classList.toggle("hidden", !showSeasonTools));
   ensureSelectedCalendarEvent();
   renderCalendarGrid();
   const quickForm = $("#quickEventForm");
@@ -1933,6 +1953,12 @@ function bowlerDetailRows(recaps, bowlerName) {
   }).sort((a, b) => String(b.recap.date).localeCompare(String(a.recap.date)));
 }
 
+function compactBowlerName(name) {
+  const parts = String(name || "").trim().split(/\s+/).filter(Boolean);
+  if (parts.length < 2) return parts[0] || "";
+  return `${parts[0]} ${parts.at(-1).charAt(0).toUpperCase()}.`;
+}
+
 function renderScores() {
   const canViewPrize = state.user?.role === "admin" || Boolean(state.config.prizeMoneyPublic);
   if (state.scoreMode === "prize" && !canViewPrize) state.scoreMode = "bowlers";
@@ -1955,7 +1981,7 @@ function renderScores() {
   $("#bowlerStats").innerHTML = visibleBowlerStats.length
     ? visibleBowlerStats.map((bowler) => `
       <tr>
-        <td><button class="text-button" type="button" data-filter-bowler="${escapeHtml(bowler.bowlerName)}">${escapeHtml(bowler.bowlerName)}</button></td>
+        <td><button class="text-button" type="button" data-filter-bowler="${escapeHtml(bowler.bowlerName)}" title="${escapeHtml(bowler.bowlerName)}">${escapeHtml(compactBowlerName(bowler.bowlerName))}</button></td>
         <td>${bowler.games}</td>
         <td>${bowler.highGame || "-"}</td>
         <td>${bowler.highSeries || "-"}</td>
@@ -2152,6 +2178,7 @@ function renderAdmin() {
   $("#configForm input[name='contestEndDate']").value = state.config.contestEndDate || "";
   $("#configForm input[name='chatImageRetentionDays']").value = state.config.chatImageRetentionDays ?? 30;
   $("#configForm input[name='prizeMoneyPublic']").checked = Boolean(state.config.prizeMoneyPublic);
+  $("#configForm input[name='seasonCalendarToolsPublic']").checked = Boolean(state.config.seasonCalendarToolsPublic);
   $("#adminUsers").innerHTML = state.adminUsers.map((user) => `
     <tr>
       <td>
@@ -2373,13 +2400,12 @@ $("#chatToggle").addEventListener("click", async () => {
   }
 });
 $("#chatFullscreen").addEventListener("click", () => {
-  state.chatFullscreen = !state.chatFullscreen;
+  setChatFullscreen(!state.chatFullscreen);
   state.chatOpen = true;
   renderChat({ forceScroll: true });
 });
 $("#chatClose").addEventListener("click", () => {
   state.chatOpen = false;
-  state.chatFullscreen = false;
   renderChat();
 });
 $("#chatForm").addEventListener("submit", async (event) => {
@@ -2678,7 +2704,7 @@ $("#noteForm").addEventListener("change", (event) => {
 });
 
 $("#noteForm").addEventListener("click", (event) => {
-  const richControl = event.target.closest("[data-rich-action]");
+  const richControl = event.target.closest("[data-rich-action], [data-rich-list-toggle]");
   if (richControl) {
     applyRichCommand(richControl);
     return;
@@ -2700,7 +2726,7 @@ $("#noteForm").addEventListener("input", (event) => {
 });
 
 $("#notesList").addEventListener("click", async (event) => {
-  const richControl = event.target.closest("[data-rich-action]");
+  const richControl = event.target.closest("[data-rich-action], [data-rich-list-toggle]");
   if (richControl) {
     applyRichCommand(richControl);
     return;
@@ -3345,11 +3371,13 @@ $("#configForm").addEventListener("submit", async (event) => {
   try {
     const payload = Object.fromEntries(new FormData(form));
     payload.prizeMoneyPublic = form.elements.prizeMoneyPublic.checked;
+    payload.seasonCalendarToolsPublic = form.elements.seasonCalendarToolsPublic.checked;
     payload.chatImageRetentionDays = Number(form.elements.chatImageRetentionDays.value || 0);
     const data = await api("/api/admin/config", { method: "PUT", body: JSON.stringify(payload) });
     state.config = data.config;
     state.schedule = data.schedule;
     renderContestHeader();
+    renderCalendar();
     renderBoard();
     renderScores();
     setActionStatus("#configStatus", "Setup saved.");

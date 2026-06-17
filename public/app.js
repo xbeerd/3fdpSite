@@ -440,6 +440,12 @@ function buildNotifications() {
   ].sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)));
 }
 
+function unreadChatCount() {
+  const chatSeenAt = notificationSeenAt("chat");
+  if (state.chatOpen) return 0;
+  return state.chatMessages.filter((message) => message.userId !== state.user?.id && String(message.createdAt || "") > chatSeenAt).length;
+}
+
 function markNotificationsSeen() {
   setNotificationSeenAt("chat", maxTimestamp(state.chatMessages.map((message) => message.createdAt)));
   setNotificationSeenAt("calendar", maxTimestamp(state.events.map((eventItem) => eventItem.createdAt)));
@@ -448,6 +454,7 @@ function markNotificationsSeen() {
 
 function markChatNotificationsSeen() {
   setNotificationSeenAt("chat", maxTimestamp(state.chatMessages.map((message) => message.createdAt)));
+  renderChatUnreadBadge();
 }
 
 function todayYmd() {
@@ -1043,6 +1050,7 @@ function renderChat(options = {}) {
   $("#chatToggle").setAttribute("aria-expanded", String(state.chatOpen));
   $("#chatFullscreen").textContent = state.chatFullscreen ? "Float" : "Full screen";
   $("#chatFullscreen").setAttribute("aria-pressed", String(state.chatFullscreen));
+  renderChatUnreadBadge();
   messages.innerHTML = state.chatMessages.length
     ? state.chatMessages.map((message) => `
       <article class="chat-message ${message.userId === state.user?.id ? "is-mine" : ""}" data-chat-message="${escapeHtml(message.id)}" ${message.userId === state.user?.id ? 'data-chat-owned="true" title="Press and hold to delete"' : ""}>
@@ -1140,11 +1148,20 @@ function renderNotificationBadge(count = state.notifications.length) {
   setInstalledAppBadge(count);
 }
 
+function renderChatUnreadBadge() {
+  const badge = $("#chatUnreadBadge");
+  if (!badge) return;
+  const count = unreadChatCount();
+  badge.classList.toggle("hidden", !count);
+  badge.textContent = count > 9 ? "9+" : String(count);
+}
+
 function renderNotifications() {
   const panel = $("#notificationPanel");
   if (!panel) return;
   panel.classList.toggle("hidden", !state.notificationOpen || !state.user);
   renderNotificationBadge();
+  renderChatUnreadBadge();
   $("#notificationList").innerHTML = state.notifications.length
     ? state.notifications.map((item) => `
       <button class="notification-item" type="button" data-notification-type="${item.type}" data-notification-target="${escapeHtml(item.targetId)}">

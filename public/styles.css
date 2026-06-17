@@ -633,6 +633,20 @@ textarea:-webkit-autofill {
   font-size: 1.25rem;
 }
 
+.pin-icon.is-active {
+  color: #7a3500;
+  background: #ffd9a8;
+  border-color: rgba(244, 123, 32, 0.55);
+}
+
+.pinned-label {
+  display: inline;
+  margin-left: 0.28rem;
+  color: #7a3500;
+  font-size: 0.72rem;
+  text-transform: uppercase;
+}
+
 .comments {
   display: grid;
   gap: 0.5rem;
@@ -659,6 +673,7 @@ textarea:-webkit-autofill {
   border-radius: 8px;
 }
 
+.feed-item.is-highlighted,
 .comment-item.is-highlighted {
   border-color: rgba(244, 123, 32, 0.9);
   box-shadow: 0 0 0 2px rgba(244, 123, 32, 0.22);

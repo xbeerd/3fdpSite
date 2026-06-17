@@ -282,6 +282,10 @@ async function applyRouteParams(params) {
   if (chatMessageId) {
     await showChatMessage(chatMessageId);
   }
+  const noteId = params.get("note");
+  if (noteId) {
+    await showBlogPost(noteId, params.get("comment") || "");
+  }
 }
 
 async function showChatMessage(messageId) {
@@ -296,6 +300,20 @@ async function showChatMessage(messageId) {
   state.notifications = buildNotifications();
   renderNotifications();
   setTimeout(() => node.classList.remove("is-highlighted"), 3200);
+}
+
+async function showBlogPost(noteId, commentId = "") {
+  await refreshNotes().catch((error) => toast(error.message));
+  renderHome();
+  const noteNode = document.querySelector(`[data-note-id="${CSS.escape(noteId)}"]`);
+  if (!noteNode) return toast("Blog post not found.");
+  if (commentId) {
+    focusComment(noteId, commentId);
+    return;
+  }
+  noteNode.classList.add("is-highlighted");
+  noteNode.scrollIntoView({ behavior: "smooth", block: "center" });
+  setTimeout(() => noteNode.classList.remove("is-highlighted"), 3200);
 }
 
 function renderShell() {
@@ -965,6 +983,24 @@ async function disablePushAlerts() {
   }
 }
 
+function noteActivityAt(note) {
+  return maxTimestamp([
+    note.lastActivityAt,
+    note.updatedAt,
+    note.createdAt,
+    ...(note.comments || []).map((comment) => comment.updatedAt || comment.createdAt)
+  ]);
+}
+
+function visibleBlogNotes() {
+  return state.notes
+    .filter((note) => !String(note.systemKey || "").startsWith("sub-"))
+    .sort((a, b) => {
+      if (Boolean(a.pinned) !== Boolean(b.pinned)) return a.pinned ? -1 : 1;
+      return String(noteActivityAt(b)).localeCompare(String(noteActivityAt(a)));
+    });
+}
+
 function renderHome() {
   const openSubCount = state.subRequests.filter((request) => !request.responses?.find((item) => item.response === "can")).length;
   const filledSubCount = state.subRequests.length - openSubCount;
@@ -992,7 +1028,7 @@ function renderHome() {
     }).join("")
     : `<p class="hint">No open sub requests right now.</p>`;
 
-  const blogNotes = state.notes.filter((note) => !String(note.systemKey || "").startsWith("sub-"));
+  const blogNotes = visibleBlogNotes();
   $("#notesList").innerHTML = blogNotes.length
     ? blogNotes.map(renderNote).join("")
     : `<p class="empty">No notes yet.</p>`;
@@ -1045,7 +1081,7 @@ function renderChat(options = {}) {
   const messages = $("#chatMessages");
   const wasNearBottom = !messages || (messages.scrollHeight - messages.scrollTop - messages.clientHeight < 48);
   chat.classList.toggle("hidden", !state.user);
-  chat.classList.toggle("is-fullscreen", state.chatFullscreen);
+  chat.classList.toggle("is-fullscreen", state.chatOpen && state.chatFullscreen);
   $("#chatPanel").classList.toggle("hidden", !state.chatOpen);
   $("#chatToggle").setAttribute("aria-expanded", String(state.chatOpen));
   $("#chatFullscreen").textContent = state.chatFullscreen ? "Float" : "Full screen";
@@ -1191,6 +1227,7 @@ function renderNote(note) {
   const noteControls = canManageNote
     ? `
       <div class="row-actions note-actions">
+        <button class="icon-action pin-icon ${note.pinned ? "is-active" : ""}" type="button" data-pin-note="${note.id}" aria-label="${note.pinned ? "Unpin blog entry" : "Pin blog entry"}" title="${note.pinned ? "Unpin blog entry" : "Pin blog entry"}">P</button>
         <button class="icon-action" type="button" data-edit-note="${note.id}" aria-label="Edit blog entry" title="Edit blog entry">✎</button>
         <button class="icon-action danger-icon" type="button" data-delete-note="${note.id}" aria-label="Delete blog entry" title="Delete blog entry">×</button>
       </div>
@@ -1230,7 +1267,7 @@ function renderNote(note) {
       <div class="feed-heading">
         <div>
           <strong>${escapeHtml(note.username)}</strong>
-          <span>${formatDateTime(note.createdAt)}${note.updatedAt ? " - edited" : ""}</span>
+          <span>${formatDateTime(note.createdAt)}${note.updatedAt ? " - edited" : ""}${note.pinned ? ` <b class="pinned-label">Pinned</b>` : ""}</span>
         </div>
         ${noteControls}
       </div>
@@ -2766,12 +2803,13 @@ $("#notesList").addEventListener("click", async (event) => {
     }
     return;
   }
+  const pin = event.target.closest("[data-pin-note]");
   const edit = event.target.closest("[data-edit-note]");
   const del = event.target.closest("[data-delete-note]");
   const editComment = event.target.closest("[data-edit-comment]");
   const deleteComment = event.target.closest("[data-delete-comment]");
   const cancelInlineEdit = event.target.closest("[data-cancel-inline-edit]");
-  const actionButton = edit || del || editComment || deleteComment || cancelInlineEdit;
+  const actionButton = pin || edit || del || editComment || deleteComment || cancelInlineEdit;
   if (actionButton) actionButton.disabled = true;
   let previousNotes = null;
   try {
@@ -2781,6 +2819,15 @@ $("#notesList").addEventListener("click", async (event) => {
     }
     if (edit) {
       openNoteEditor(edit.dataset.editNote);
+      return;
+    }
+    if (pin) {
+      const note = state.notes.find((item) => item.id === pin.dataset.pinNote);
+      if (!note) return toast("Blog entry not found.");
+      const data = await api(`/api/notes/${pin.dataset.pinNote}/pin`, { method: "POST", body: JSON.stringify({ pinned: !note.pinned }) });
+      state.notes = data.notes || state.notes;
+      renderHome();
+      toast(note.pinned ? "Blog post unpinned." : "Blog post pinned.");
       return;
     }
     if (editComment) {
@@ -2886,7 +2933,7 @@ $("#notesList").addEventListener("submit", async (event) => {
   if (submit) submit.disabled = true;
   try {
     state.notes = state.notes.map((note) => note.id === noteId
-      ? { ...note, comments: [...(note.comments || []), optimisticComment] }
+      ? { ...note, lastActivityAt: optimisticComment.createdAt, comments: [...(note.comments || []), optimisticComment] }
       : note);
     form.reset();
     form.querySelectorAll(".rich-editor").forEach((editor) => { editor.innerHTML = ""; });
@@ -2894,7 +2941,7 @@ $("#notesList").addEventListener("submit", async (event) => {
     const data = await api(`/api/notes/${noteId}/comments`, { method: "POST", body: JSON.stringify({ text }) });
     if (data.comment) {
       state.notes = state.notes.map((note) => note.id === noteId
-        ? { ...note, comments: (note.comments || []).map((comment) => comment.id === optimisticComment.id ? data.comment : comment) }
+        ? { ...note, lastActivityAt: data.comment.createdAt, comments: (note.comments || []).map((comment) => comment.id === optimisticComment.id ? data.comment : comment) }
         : note);
       renderHome();
       focusComment(noteId, data.comment.id);

@@ -381,14 +381,31 @@ function sanitizeRichText(value, maxLength = 5000) {
 function normalizeNote(note) {
   return {
     ...note,
+    pinned: Boolean(note.pinned),
     comments: (note.comments || []).sort((a, b) => String(a.createdAt).localeCompare(String(b.createdAt)))
   };
+}
+
+function maxTimestamp(values) {
+  return values.filter(Boolean).sort().at(-1) || "";
+}
+
+function noteActivityAt(note) {
+  return maxTimestamp([
+    note.lastActivityAt,
+    note.updatedAt,
+    note.createdAt,
+    ...(note.comments || []).map((comment) => comment.updatedAt || comment.createdAt)
+  ]);
 }
 
 function sortedNotes(data) {
   return [...data.notes]
     .map(normalizeNote)
-    .sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)))
+    .sort((a, b) => {
+      if (Boolean(a.pinned) !== Boolean(b.pinned)) return a.pinned ? -1 : 1;
+      return String(noteActivityAt(b)).localeCompare(String(noteActivityAt(a)));
+    })
     .slice(0, 50);
 }
 
@@ -1537,7 +1554,7 @@ exports.handler = async (event) => {
         body: `${user.username} posted a team note.`,
         tag: `blog-post-${note.id}`
       });
-      await sendMentionNotifications(data, user.id, plainText, { label: "a blog post", type: "note", id: note.id, url: "/#home" });
+      await sendMentionNotifications(data, user.id, plainText, { label: "a blog post", type: "note", id: note.id, url: `/#home?note=${encodeURIComponent(note.id)}` });
       return json(201, { notes: sortedNotes(data), note: normalizeNote(note) });
     }
 
@@ -1552,7 +1569,17 @@ exports.handler = async (event) => {
       note.text = text;
       note.updatedAt = new Date().toISOString();
       await saveData(data);
-      await sendMentionNotifications(data, user.id, plainText, { label: "a blog post", type: "note", id: note.id, url: "/#home" });
+      await sendMentionNotifications(data, user.id, plainText, { label: "a blog post", type: "note", id: note.id, url: `/#home?note=${encodeURIComponent(note.id)}` });
+      return json(200, { notes: sortedNotes(data) });
+    }
+
+    if (method === "POST" && /^\/notes\/[^/]+\/pin$/.test(route)) {
+      const user = requireUser(event, data);
+      const note = findNote(data, decodeURIComponent(route.split("/")[2]));
+      if (!note) return json(404, { error: "Blog entry not found." });
+      if (!canManageOwnedItem(user, note)) return json(403, { error: "You can only pin your own blog entries." });
+      note.pinned = normalizeBoolean(parseBody(event).pinned, !note.pinned);
+      await saveData(data);
       return json(200, { notes: sortedNotes(data) });
     }
 
@@ -1579,13 +1606,14 @@ exports.handler = async (event) => {
       note.comments = note.comments || [];
       const comment = { id: crypto.randomUUID(), userId: user.id, username: user.username, text, createdAt: new Date().toISOString() };
       note.comments.push(comment);
+      note.lastActivityAt = comment.createdAt;
       await saveData(data);
       await sendBlogNotification(data, user.id, {
         title: "3FDP blog reply",
         body: `${user.username} replied to a team note.`,
         tag: `blog-reply-${note.id}`
       });
-      await sendMentionNotifications(data, user.id, plainText, { label: "a blog reply", type: "comment", id: comment.id, url: "/#home" });
+      await sendMentionNotifications(data, user.id, plainText, { label: "a blog reply", type: "comment", id: comment.id, url: `/#home?note=${encodeURIComponent(note.id)}&comment=${encodeURIComponent(comment.id)}` });
       return json(201, { notes: sortedNotes(data), comment });
     }
 
@@ -1601,8 +1629,9 @@ exports.handler = async (event) => {
       if (!plainText) return json(400, { error: "Reply cannot be blank." });
       comment.text = text;
       comment.updatedAt = new Date().toISOString();
+      note.lastActivityAt = comment.updatedAt;
       await saveData(data);
-      await sendMentionNotifications(data, user.id, plainText, { label: "a blog reply", type: "comment", id: comment.id, url: "/#home" });
+      await sendMentionNotifications(data, user.id, plainText, { label: "a blog reply", type: "comment", id: comment.id, url: `/#home?note=${encodeURIComponent(note.id)}&comment=${encodeURIComponent(comment.id)}` });
       return json(200, { notes: sortedNotes(data), comment });
     }
 

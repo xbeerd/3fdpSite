@@ -336,6 +336,47 @@ function validateWeight(weight) {
   return Number.isFinite(value) && value > 0 && value < 1500 ? value : null;
 }
 
+function richTextPlainText(value) {
+  return String(value || "")
+    .replace(/<br\s*\/?>/gi, "\n")
+    .replace(/<\/(p|div|li)>/gi, "\n")
+    .replace(/<[^>]*>/g, "")
+    .replace(/&nbsp;/gi, " ")
+    .replace(/&amp;/gi, "&")
+    .replace(/&lt;/gi, "<")
+    .replace(/&gt;/gi, ">")
+    .replace(/&quot;/gi, "\"")
+    .replace(/&#39;/gi, "'")
+    .trim();
+}
+
+function cleanRichStyle(style = "") {
+  const allowed = [];
+  const color = String(style).match(/(?:^|;)\s*color\s*:\s*(#[0-9a-f]{3,6}|rgb\(\s*\d{1,3}\s*,\s*\d{1,3}\s*,\s*\d{1,3}\s*\)|[a-z]+)\s*(?:;|$)/i);
+  const fontSize = String(style).match(/(?:^|;)\s*font-size\s*:\s*(1[2-9]|2[0-4])px\s*(?:;|$)/i);
+  if (color) allowed.push(`color: ${color[1]}`);
+  if (fontSize) allowed.push(`font-size: ${fontSize[1]}px`);
+  return allowed.length ? ` style="${allowed.join("; ")}"` : "";
+}
+
+function sanitizeRichText(value, maxLength = 5000) {
+  const allowedTags = new Set(["b", "strong", "i", "em", "u", "br", "ul", "ol", "li", "p", "div", "span"]);
+  return String(value || "")
+    .trim()
+    .slice(0, maxLength)
+    .replace(/<!--[\s\S]*?-->/g, "")
+    .replace(/<\/?(script|style|iframe|object|embed|form|input|button|textarea|select|option|meta|link)[^>]*>/gi, "")
+    .replace(/<\/?([a-z][a-z0-9-]*)([^>]*)>/gi, (match, tagName, attributes = "") => {
+      const tag = tagName.toLowerCase();
+      if (!allowedTags.has(tag)) return "";
+      if (tag === "br") return "<br>";
+      const closing = match.startsWith("</");
+      if (closing) return `</${tag}>`;
+      const style = ["span", "p", "div", "li"].includes(tag) ? cleanRichStyle(attributes.match(/\sstyle\s*=\s*(?:"([^"]*)"|'([^']*)'|([^>\s]+))/i)?.slice(1).find(Boolean) || "") : "";
+      return `<${tag}${style}>`;
+    });
+}
+
 function normalizeNote(note) {
   return {
     ...note,
@@ -1482,9 +1523,10 @@ exports.handler = async (event) => {
     if (method === "POST" && route === "/notes") {
       const user = requireUser(event, data);
       const body = parseBody(event);
-      const text = String(body.text || "").trim();
+      const text = sanitizeRichText(body.text);
+      const plainText = richTextPlainText(text);
       const photoDataUrl = normalizeScorePhoto(body.photoDataUrl);
-      if (!text && !photoDataUrl) return json(400, { error: "Note cannot be blank." });
+      if (!plainText && !photoDataUrl) return json(400, { error: "Note cannot be blank." });
       const note = { id: crypto.randomUUID(), userId: user.id, username: user.username, text, photoDataUrl, comments: [], createdAt: new Date().toISOString() };
       data.notes.push(note);
       await saveData(data);
@@ -1493,21 +1535,22 @@ exports.handler = async (event) => {
         body: `${user.username} posted a team note.`,
         tag: `blog-post-${note.id}`
       });
-      await sendMentionNotifications(data, user.id, text, { label: "a blog post", type: "note", id: note.id, url: "/#home" });
+      await sendMentionNotifications(data, user.id, plainText, { label: "a blog post", type: "note", id: note.id, url: "/#home" });
       return json(201, { notes: sortedNotes(data), note: normalizeNote(note) });
     }
 
     if (method === "PUT" && /^\/notes\/[^/]+$/.test(route)) {
       const user = requireUser(event, data);
       const note = findNote(data, decodeURIComponent(route.split("/")[2]));
-      const text = String(parseBody(event).text || "").trim();
+      const text = sanitizeRichText(parseBody(event).text);
+      const plainText = richTextPlainText(text);
       if (!note) return json(404, { error: "Blog entry not found." });
       if (!canManageOwnedItem(user, note)) return json(403, { error: "You can only edit your own blog entries." });
-      if (!text) return json(400, { error: "Blog entry cannot be blank." });
+      if (!plainText) return json(400, { error: "Blog entry cannot be blank." });
       note.text = text;
       note.updatedAt = new Date().toISOString();
       await saveData(data);
-      await sendMentionNotifications(data, user.id, text, { label: "a blog post", type: "note", id: note.id, url: "/#home" });
+      await sendMentionNotifications(data, user.id, plainText, { label: "a blog post", type: "note", id: note.id, url: "/#home" });
       return json(200, { notes: sortedNotes(data) });
     }
 
@@ -1527,9 +1570,10 @@ exports.handler = async (event) => {
     if (method === "POST" && /^\/notes\/[^/]+\/comments$/.test(route)) {
       const user = requireUser(event, data);
       const note = findNote(data, decodeURIComponent(route.split("/")[2]));
-      const text = String(parseBody(event).text || "").trim();
+      const text = sanitizeRichText(parseBody(event).text);
+      const plainText = richTextPlainText(text);
       if (!note) return json(404, { error: "Blog entry not found." });
-      if (!text) return json(400, { error: "Comment cannot be blank." });
+      if (!plainText) return json(400, { error: "Comment cannot be blank." });
       note.comments = note.comments || [];
       const comment = { id: crypto.randomUUID(), userId: user.id, username: user.username, text, createdAt: new Date().toISOString() };
       note.comments.push(comment);
@@ -1539,7 +1583,7 @@ exports.handler = async (event) => {
         body: `${user.username} replied to a team note.`,
         tag: `blog-reply-${note.id}`
       });
-      await sendMentionNotifications(data, user.id, text, { label: "a blog reply", type: "comment", id: comment.id, url: "/#home" });
+      await sendMentionNotifications(data, user.id, plainText, { label: "a blog reply", type: "comment", id: comment.id, url: "/#home" });
       return json(201, { notes: sortedNotes(data), comment });
     }
 
@@ -1548,14 +1592,15 @@ exports.handler = async (event) => {
       const [, , noteId, , commentId] = route.split("/");
       const note = findNote(data, decodeURIComponent(noteId));
       const comment = findNoteComment(note, decodeURIComponent(commentId));
-      const text = String(parseBody(event).text || "").trim();
+      const text = sanitizeRichText(parseBody(event).text);
+      const plainText = richTextPlainText(text);
       if (!note || !comment) return json(404, { error: "Reply not found." });
       if (!canManageOwnedItem(user, comment)) return json(403, { error: "You can only edit your own replies." });
-      if (!text) return json(400, { error: "Reply cannot be blank." });
+      if (!plainText) return json(400, { error: "Reply cannot be blank." });
       comment.text = text;
       comment.updatedAt = new Date().toISOString();
       await saveData(data);
-      await sendMentionNotifications(data, user.id, text, { label: "a blog reply", type: "comment", id: comment.id, url: "/#home" });
+      await sendMentionNotifications(data, user.id, plainText, { label: "a blog reply", type: "comment", id: comment.id, url: "/#home" });
       return json(200, { notes: sortedNotes(data), comment });
     }
 

@@ -65,6 +65,101 @@ function formatMentionText(value) {
   });
 }
 
+function stripRichText(value) {
+  const holder = document.createElement("div");
+  holder.innerHTML = sanitizeRichText(value);
+  return holder.textContent.trim();
+}
+
+function sanitizeRichText(value) {
+  const template = document.createElement("template");
+  template.innerHTML = String(value || "");
+  const allowedTags = new Set(["B", "STRONG", "I", "EM", "U", "BR", "UL", "OL", "LI", "P", "DIV", "SPAN"]);
+  const cleanNode = (node) => {
+    if (node.nodeType === Node.TEXT_NODE) return document.createTextNode(node.textContent || "");
+    if (node.nodeType !== Node.ELEMENT_NODE) return document.createTextNode("");
+    if (!allowedTags.has(node.tagName)) {
+      const fragment = document.createDocumentFragment();
+      [...node.childNodes].forEach((child) => fragment.appendChild(cleanNode(child)));
+      return fragment;
+    }
+    const clean = document.createElement(node.tagName.toLowerCase());
+    const style = [];
+    const color = node.style?.color || "";
+    const fontSize = node.style?.fontSize || "";
+    if (/^(#[0-9a-f]{3,6}|rgb\(\s*\d{1,3}\s*,\s*\d{1,3}\s*,\s*\d{1,3}\s*\)|[a-z]+)$/i.test(color)) style.push(`color: ${color}`);
+    if (/^(1[2-9]|2[0-4])px$/i.test(fontSize)) style.push(`font-size: ${fontSize}`);
+    if (style.length && ["SPAN", "P", "DIV", "LI"].includes(node.tagName)) clean.setAttribute("style", style.join("; "));
+    [...node.childNodes].forEach((child) => clean.appendChild(cleanNode(child)));
+    return clean;
+  };
+  const output = document.createElement("div");
+  [...template.content.childNodes].forEach((child) => output.appendChild(cleanNode(child)));
+  return output.innerHTML.trim();
+}
+
+function formatBlogText(value) {
+  const raw = String(value || "");
+  const html = /<[^>]+>/.test(raw) ? sanitizeRichText(raw) : escapeHtml(raw);
+  return html.replace(/(^|[\s(>])(@[a-z0-9][a-z0-9._ -]{0,60})/gi, (match, prefix, mention) => {
+    const trimmedMention = mention.replace(/\s+$/g, "");
+    const trailing = mention.slice(trimmedMention.length);
+    return `${prefix}<span class="mention-text">${trimmedMention}</span>${trailing}`;
+  });
+}
+
+function richEditorMarkup(name, value = "", placeholder = "Write something...") {
+  return `
+    <div class="rich-editor-wrap compact-rich-editor">
+      <div class="rich-toolbar" aria-label="Blog formatting">
+        <button class="ghost small" type="button" data-rich-action="bold"><strong>B</strong></button>
+        <button class="ghost small" type="button" data-rich-action="italic"><em>I</em></button>
+        <button class="ghost small" type="button" data-rich-action="underline"><u>U</u></button>
+        <select data-rich-size aria-label="Font size">
+          <option value="">Size</option>
+          <option value="14px">Small</option>
+          <option value="16px">Normal</option>
+          <option value="20px">Large</option>
+          <option value="24px">Huge</option>
+        </select>
+        <input data-rich-color type="color" value="#151515" aria-label="Text color">
+        <button class="ghost small" type="button" data-rich-action="insertUnorderedList">Bullets</button>
+        <button class="ghost small" type="button" data-rich-action="insertOrderedList">Numbers</button>
+      </div>
+      <div class="rich-editor" contenteditable="true" data-rich-input="${escapeHtml(name)}" data-placeholder="${escapeHtml(placeholder)}">${sanitizeRichText(value)}</div>
+      <input name="${escapeHtml(name)}" type="hidden" value="${escapeHtml(sanitizeRichText(value))}">
+    </div>
+  `;
+}
+
+function syncRichEditors(scope = document) {
+  scope.querySelectorAll(".rich-editor").forEach((editor) => {
+    const input = editor.parentElement?.querySelector(`input[name="${CSS.escape(editor.dataset.richInput || "text")}"]`);
+    if (input) input.value = sanitizeRichText(editor.innerHTML);
+  });
+}
+
+function applyRichCommand(control) {
+  const wrap = control.closest(".rich-editor-wrap");
+  const editor = wrap?.querySelector(".rich-editor");
+  if (!editor) return;
+  editor.focus();
+  if (control.matches("[data-rich-size]")) {
+    document.execCommand("fontSize", false, "4");
+    editor.querySelectorAll("font[size='4']").forEach((font) => {
+      const span = document.createElement("span");
+      span.style.fontSize = control.value || "16px";
+      span.innerHTML = font.innerHTML;
+      font.replaceWith(span);
+    });
+  } else if (control.matches("[data-rich-color]")) {
+    document.execCommand("foreColor", false, control.value || "#151515");
+  } else {
+    document.execCommand(control.dataset.richAction, false, null);
+  }
+  syncRichEditors(wrap);
+}
+
 function toast(message) {
   const node = $("#toast");
   node.textContent = message;
@@ -832,10 +927,12 @@ function renderHome() {
     ? state.subRequests.map((request) => {
       const confirmed = request.responses?.find((item) => item.response === "can");
       return `
-      <article class="summary-item">
-        <strong>${confirmed ? "Sub filled:" : "Sub needed:"}</strong> ${escapeHtml(request.event?.title || "Bowling")}
-        <span>${escapeHtml(formatDate(request.event?.date || ""))}</span>
-        ${confirmed ? `<span>${escapeHtml(confirmed.bowlerName || confirmed.username)} for ${escapeHtml(request.requestedFor || request.requestedBy)}</span>` : ""}
+      <article class="summary-item compact-summary-item">
+        <div>
+          <strong>${confirmed ? "Filled" : "Need sub"}</strong>
+          <span>${escapeHtml(formatDate(request.event?.date || ""))} - ${escapeHtml(request.event?.title || "Bowling")}</span>
+          ${confirmed ? `<span>${escapeHtml(confirmed.bowlerName || confirmed.username)} for ${escapeHtml(request.requestedFor || request.requestedBy)}</span>` : ""}
+        </div>
         <button class="small ghost" type="button" data-open-sub-event="${request.eventId}">View on calendar</button>
       </article>
     `;
@@ -864,10 +961,10 @@ function renderReactionControls(item, type, target) {
   const reactions = Array.isArray(item.reactions) ? item.reactions : [];
   const counts = reactionChoices.map(({ key, label }) => {
     const matches = reactions.filter((entry) => reactionKey(entry.reaction) === key);
-    return { key, label, count: matches.length };
+    return { key, label, count: matches.length, names: matches.map((entry) => entry.username).filter(Boolean).join(", ") };
   }).filter((item) => item.count);
   const summary = counts.length
-    ? counts.map((item) => `<span class="reaction-summary">${item.label}<b>${item.count}</b></span>`).join("")
+    ? counts.map((item) => `<span class="reaction-summary" title="${escapeHtml(item.names || item.label)}">${item.label}<b>${item.count}</b></span>`).join("")
     : `<span class="reaction-summary-label">React</span>`;
   return `
     <details class="reaction-picker">
@@ -903,7 +1000,7 @@ function renderChat(options = {}) {
           <strong>${escapeHtml(message.username)}</strong>
           <span>${formatDateTime(message.createdAt)}</span>
         </div>
-        ${message.text ? `<p>${formatMentionText(message.text)}</p>` : ""}
+        ${message.text ? `<p class="chat-text">${formatMentionText(message.text)}</p>` : ""}
         ${message.imageDataUrl ? `<button class="chat-photo-thumb" type="button" data-chat-image="${escapeHtml(message.id)}"><img src="${message.imageDataUrl}" alt="Chat photo from ${escapeHtml(message.username)}"></button>` : ""}
         ${message.imageExpiredAt ? `<p class="muted">Photo expired.</p>` : ""}
         ${message.userId === state.user?.id ? `<span class="chat-delete-hint">Hold to delete</span>` : ""}
@@ -1027,8 +1124,8 @@ function renderNote(note) {
   const noteControls = canManageNote
     ? `
       <div class="row-actions note-actions">
-        <button class="small ghost" type="button" data-edit-note="${note.id}">Edit</button>
-        <button class="small danger" type="button" data-delete-note="${note.id}">Delete</button>
+        <button class="icon-action" type="button" data-edit-note="${note.id}" aria-label="Edit blog entry" title="Edit blog entry">✎</button>
+        <button class="icon-action danger-icon" type="button" data-delete-note="${note.id}" aria-label="Delete blog entry" title="Delete blog entry">×</button>
       </div>
     `
     : "";
@@ -1038,13 +1135,13 @@ function renderNote(note) {
       const commentControls = canManageComment
         ? `
           <div class="row-actions note-actions">
-            <button class="small ghost" type="button" data-edit-comment="${note.id}:${comment.id}">Edit</button>
-            <button class="small danger" type="button" data-delete-comment="${note.id}:${comment.id}">Delete</button>
+            <button class="icon-action" type="button" data-edit-comment="${note.id}:${comment.id}" aria-label="Edit reply" title="Edit reply">✎</button>
+            <button class="icon-action danger-icon" type="button" data-delete-comment="${note.id}:${comment.id}" aria-label="Delete reply" title="Delete reply">×</button>
           </div>
         `
         : "";
       return `
-      <article class="comment-item" data-comment-id="${comment.id}">
+      <article class="comment-item is-collapsed" data-comment-id="${comment.id}">
         <div class="feed-heading">
           <div>
             <strong>${escapeHtml(comment.username)}</strong>
@@ -1052,7 +1149,9 @@ function renderNote(note) {
           </div>
           ${commentControls}
         </div>
-        <p class="comment-text">${formatMentionText(comment.text)}</p>
+        <button class="comment-preview" type="button" data-toggle-comment="${comment.id}" aria-label="Expand or collapse reply">
+          <span class="comment-text formatted-text rich-text-content">${formatBlogText(comment.text)}</span>
+        </button>
         ${renderReactionControls(comment, "comment", `${note.id}:${comment.id}`)}
       </article>
     `;
@@ -1068,14 +1167,14 @@ function renderNote(note) {
         </div>
         ${noteControls}
       </div>
-      ${note.text ? `<p class="note-text">${formatMentionText(note.text)}</p>` : ""}
+      ${note.text ? `<div class="note-text formatted-text rich-text-content">${formatBlogText(note.text)}</div>` : ""}
       ${note.photoDataUrl ? `<img class="note-photo" src="${note.photoDataUrl}" alt="Blog post image">` : ""}
       ${renderReactionControls(note, "note", note.id)}
       <details class="comments">
         <summary>${replyCount ? `Replies (${replyCount})` : "Reply"}</summary>
         <div class="comment-list">${comments}</div>
         <form class="comment-form" data-comment-form="${note.id}">
-          <label>Reply <textarea name="text" rows="2" placeholder="Write a reply..."></textarea></label>
+          <label>Reply ${richEditorMarkup("text", "", "Write a reply...")}</label>
           <button class="small" type="submit">Post reply</button>
         </form>
       </details>
@@ -1088,19 +1187,19 @@ function openNoteEditor(noteId) {
   const article = document.querySelector(`[data-note-id="${CSS.escape(noteId)}"]`);
   if (!note || !article) return;
   const existing = article.querySelector("[data-edit-note-form]");
-  if (existing) return existing.querySelector("textarea")?.focus();
+  if (existing) return existing.querySelector(".rich-editor")?.focus();
   article.querySelector(".note-text")?.classList.add("hidden");
   article.querySelector(".note-actions")?.classList.add("hidden");
   article.querySelector(".feed-heading")?.insertAdjacentHTML("afterend", `
     <form class="inline-edit-form" data-edit-note-form="${note.id}">
-      <label>Edit blog entry <textarea name="text" rows="7">${escapeHtml(note.text || "")}</textarea></label>
+      <label>Edit blog entry ${richEditorMarkup("text", note.text || "", "Update this blog entry...")}</label>
       <div class="row-actions">
         <button class="small" type="submit">Save</button>
         <button class="small ghost" type="button" data-cancel-inline-edit>Cancel</button>
       </div>
     </form>
   `);
-  article.querySelector("[data-edit-note-form] textarea")?.focus();
+  article.querySelector("[data-edit-note-form] .rich-editor")?.focus();
 }
 
 function openCommentEditor(noteId, commentId) {
@@ -1109,19 +1208,20 @@ function openCommentEditor(noteId, commentId) {
   const article = document.querySelector(`[data-note-id="${CSS.escape(noteId)}"] [data-comment-id="${CSS.escape(commentId)}"]`);
   if (!note || !comment || !article) return;
   const existing = article.querySelector("[data-edit-comment-form]");
-  if (existing) return existing.querySelector("textarea")?.focus();
+  if (existing) return existing.querySelector(".rich-editor")?.focus();
+  article.classList.remove("is-collapsed");
   article.querySelector(".comment-text")?.classList.add("hidden");
   article.querySelector(".note-actions")?.classList.add("hidden");
   article.insertAdjacentHTML("beforeend", `
     <form class="inline-edit-form" data-edit-comment-form="${note.id}:${comment.id}">
-      <label>Edit reply <textarea name="text" rows="4">${escapeHtml(comment.text || "")}</textarea></label>
+      <label>Edit reply ${richEditorMarkup("text", comment.text || "", "Update this reply...")}</label>
       <div class="row-actions">
         <button class="small" type="submit">Save</button>
         <button class="small ghost" type="button" data-cancel-inline-edit>Cancel</button>
       </div>
     </form>
   `);
-  article.querySelector("[data-edit-comment-form] textarea")?.focus();
+  article.querySelector("[data-edit-comment-form] .rich-editor")?.focus();
 }
 
 function renderCalendar() {
@@ -1991,7 +2091,7 @@ function renderScoreRecap(recap) {
         </div>
         ${adminControls}
       </div>
-      ${recap.notes ? `<p class="admin-note"><strong>Admin note:</strong> ${escapeHtml(recap.notes)}</p>` : ""}
+      ${recap.notes ? `<p class="admin-note formatted-text"><strong>Admin note:</strong> ${escapeHtml(recap.notes)}</p>` : ""}
       ${recap.photoDataUrl ? `<details class="score-photo-details"><summary>View image</summary><img class="score-photo" src="${recap.photoDataUrl}" alt="Recap photo for ${escapeHtml(formatDate(recap.date))}"></details>` : ""}
       <div class="score-team-wrap">
         ${renderScoreTeam(recap.ourTeamLines, recap.ourTeamName || "3FDP", { totals })}
@@ -2485,14 +2585,17 @@ $("#passwordSetupForm").addEventListener("submit", async (event) => {
 $("#noteForm").addEventListener("submit", async (event) => {
   event.preventDefault();
   const form = event.currentTarget;
+  syncRichEditors(form);
   const submit = form.querySelector("button[type='submit']");
   if (submit) submit.disabled = true;
   try {
     const payload = Object.fromEntries(new FormData(form));
+    if (!stripRichText(payload.text) && !state.notePhotoDataUrl) throw new Error("Note cannot be blank.");
     delete payload.photo;
     payload.photoDataUrl = state.notePhotoDataUrl;
     const data = await api("/api/notes", { method: "POST", body: JSON.stringify(payload) });
     form.reset();
+    form.querySelectorAll(".rich-editor").forEach((editor) => { editor.innerHTML = ""; });
     state.notePhotoDataUrl = "";
     renderNotePhotoPreview();
     if (data.note) state.notes = [data.note, ...state.notes.filter((note) => note.id !== data.note.id)];
@@ -2521,6 +2624,11 @@ $("#noteForm").addEventListener("change", (event) => {
 });
 
 $("#noteForm").addEventListener("click", (event) => {
+  const richControl = event.target.closest("[data-rich-action]");
+  if (richControl) {
+    applyRichCommand(richControl);
+    return;
+  }
   if (!event.target.closest("[data-clear-note-photo]")) return;
   state.notePhotoDataUrl = "";
   const input = $("#noteForm input[name='photo']");
@@ -2528,7 +2636,27 @@ $("#noteForm").addEventListener("click", (event) => {
   renderNotePhotoPreview();
 });
 
+$("#noteForm").addEventListener("change", (event) => {
+  const richControl = event.target.closest("[data-rich-size], [data-rich-color]");
+  if (richControl) applyRichCommand(richControl);
+});
+
+$("#noteForm").addEventListener("input", (event) => {
+  if (event.target.closest(".rich-editor")) syncRichEditors(event.currentTarget);
+});
+
 $("#notesList").addEventListener("click", async (event) => {
+  const richControl = event.target.closest("[data-rich-action]");
+  if (richControl) {
+    applyRichCommand(richControl);
+    return;
+  }
+  const commentToggle = event.target.closest("[data-toggle-comment]");
+  if (commentToggle) {
+    const item = commentToggle.closest(".comment-item");
+    item?.classList.toggle("is-collapsed");
+    return;
+  }
   const reactionButton = event.target.closest("[data-react-type]");
   if (reactionButton) {
     reactionButton.disabled = true;
@@ -2601,9 +2729,10 @@ $("#notesList").addEventListener("submit", async (event) => {
   const noteEditForm = event.target.closest("[data-edit-note-form]");
   if (noteEditForm) {
     event.preventDefault();
+    syncRichEditors(noteEditForm);
     const submit = noteEditForm.querySelector("button[type='submit']");
     const text = String(new FormData(noteEditForm).get("text") || "").trim();
-    if (!text) return toast("Blog entry cannot be blank.");
+    if (!stripRichText(text)) return toast("Blog entry cannot be blank.");
     if (submit) submit.disabled = true;
     try {
       const data = await api(`/api/notes/${noteEditForm.dataset.editNoteForm}`, { method: "PUT", body: JSON.stringify({ text }) });
@@ -2621,10 +2750,11 @@ $("#notesList").addEventListener("submit", async (event) => {
   const commentEditForm = event.target.closest("[data-edit-comment-form]");
   if (commentEditForm) {
     event.preventDefault();
+    syncRichEditors(commentEditForm);
     const submit = commentEditForm.querySelector("button[type='submit']");
     const text = String(new FormData(commentEditForm).get("text") || "").trim();
     const [noteId, commentId] = commentEditForm.dataset.editCommentForm.split(":");
-    if (!text) return toast("Reply cannot be blank.");
+    if (!stripRichText(text)) return toast("Reply cannot be blank.");
     if (submit) submit.disabled = true;
     try {
       const data = await api(`/api/notes/${noteId}/comments/${commentId}`, { method: "PUT", body: JSON.stringify({ text }) });
@@ -2642,10 +2772,11 @@ $("#notesList").addEventListener("submit", async (event) => {
   const form = event.target.closest("[data-comment-form]");
   if (!form) return;
   event.preventDefault();
+  syncRichEditors(form);
   const submit = form.querySelector("button[type='submit']");
   if (submit?.disabled) return;
   const text = String(new FormData(form).get("text") || "").trim();
-  if (!text) return toast("Reply cannot be blank.");
+  if (!stripRichText(text)) return toast("Reply cannot be blank.");
   const noteId = form.dataset.commentForm;
   const previousNotes = structuredClone(state.notes);
   const optimisticComment = {
@@ -2661,6 +2792,7 @@ $("#notesList").addEventListener("submit", async (event) => {
       ? { ...note, comments: [...(note.comments || []), optimisticComment] }
       : note);
     form.reset();
+    form.querySelectorAll(".rich-editor").forEach((editor) => { editor.innerHTML = ""; });
     renderHome();
     const data = await api(`/api/notes/${noteId}/comments`, { method: "POST", body: JSON.stringify({ text }) });
     if (data.comment) {
@@ -2677,6 +2809,16 @@ $("#notesList").addEventListener("submit", async (event) => {
   } finally {
     if (submit?.isConnected) submit.disabled = false;
   }
+});
+
+$("#notesList").addEventListener("change", (event) => {
+  const richControl = event.target.closest("[data-rich-size], [data-rich-color]");
+  if (richControl) applyRichCommand(richControl);
+});
+
+$("#notesList").addEventListener("input", (event) => {
+  const form = event.target.closest("form");
+  if (form && event.target.closest(".rich-editor")) syncRichEditors(form);
 });
 
 $("#calendarList").addEventListener("click", async (event) => {

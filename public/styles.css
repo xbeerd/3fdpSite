@@ -522,35 +522,106 @@ textarea:-webkit-autofill {
   min-width: 0;
 }
 
-.summary-list, .feed, .card-list { display: grid; gap: 0.8rem; margin-top: 1rem; min-width: 0; }
+.summary-list, .feed, .card-list { display: grid; gap: 0.62rem; margin-top: 0.75rem; min-width: 0; }
 
 .summary-item, .feed-item, .event-card, .sub-box {
   min-width: 0;
   border: 1px solid var(--line);
   border-radius: 8px;
-  padding: 0.9rem;
+  padding: 0.68rem;
   background: white;
 }
 
-.feed-item p, .event-card p, .sub-box p { margin: 0.35rem 0; }
+.compact-summary-item {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 0.55rem;
+  align-items: center;
+}
+
+.compact-summary-item strong {
+  display: inline;
+  margin-right: 0.22rem;
+}
+
+.compact-summary-item span {
+  display: inline;
+  margin: 0;
+}
+
+.compact-summary-item button {
+  min-height: 2.1rem;
+}
+
+.feed-item p, .feed-item .formatted-text, .event-card p, .sub-box p { margin: 0.25rem 0; }
 .feed-item span, .summary-item span { display: block; color: var(--muted); font-size: 0.82rem; margin-top: 0.35rem; }
+
+.formatted-text {
+  max-width: 100%;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  line-height: 1.42;
+}
+
+.rich-text-content {
+  font-size: 0.96rem;
+}
+
+.rich-text-content p,
+.rich-text-content div {
+  margin: 0.25rem 0;
+}
+
+.rich-text-content ul,
+.rich-text-content ol {
+  margin: 0.25rem 0 0.25rem 1.25rem;
+  padding: 0;
+}
 
 .feed-heading {
   display: flex;
   justify-content: space-between;
-  gap: 0.8rem;
+  gap: 0.55rem;
   align-items: start;
 }
 
 .note-actions {
+  display: inline-flex;
+  flex-wrap: nowrap;
+  gap: 0.22rem;
   justify-content: end;
+}
+
+.icon-action {
+  display: inline-grid;
+  place-items: center;
+  width: 2rem;
+  min-width: 2rem;
+  height: 2rem;
+  min-height: 2rem;
+  padding: 0;
+  color: var(--text);
+  background: #f7f7f7;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  box-shadow: none;
+  font-size: 1.05rem;
+  line-height: 1;
+}
+
+.icon-action.danger-icon {
+  color: #8a1111;
+  background: #f8dddd;
+  border-color: #edc2c2;
+  font-size: 1.25rem;
 }
 
 .comments {
   display: grid;
-  gap: 0.65rem;
-  margin-top: 0.85rem;
-  padding-top: 0.85rem;
+  gap: 0.5rem;
+  margin-top: 0.6rem;
+  padding-top: 0.55rem;
   border-top: 1px solid var(--line);
 }
 
@@ -562,14 +633,41 @@ textarea:-webkit-autofill {
 
 .comment-list {
   display: grid;
-  gap: 0.45rem;
+  gap: 0.36rem;
 }
 
 .comment-item {
-  padding: 0.48rem 0.55rem;
+  padding: 0.42rem 0.5rem;
   background: #f7f7f7;
   border: 1px solid var(--line);
   border-radius: 8px;
+}
+
+.comment-preview {
+  display: block;
+  width: 100%;
+  min-height: 0;
+  padding: 0;
+  color: var(--text);
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+  text-align: left;
+}
+
+.comment-preview .comment-text {
+  display: block;
+}
+
+.comment-item.is-collapsed .comment-preview .comment-text {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.comment-item.is-collapsed .reaction-picker {
+  display: none;
 }
 
 .comment-item .feed-heading {
@@ -591,20 +689,85 @@ textarea:-webkit-autofill {
 }
 
 .comment-item .note-actions {
-  display: flex;
+  display: inline-flex;
   flex-wrap: nowrap;
   gap: 0.25rem;
 }
 
-.comment-item .note-actions .small {
-  min-height: 1.9rem;
-  padding: 0.28rem 0.48rem;
-  font-size: 0.68rem;
+.comment-item .note-actions .icon-action {
+  width: 1.75rem;
+  min-width: 1.75rem;
+  height: 1.75rem;
+  min-height: 1.75rem;
+  font-size: 0.92rem;
+}
+
+.comment-item .note-actions .danger-icon {
+  font-size: 1.12rem;
 }
 
 .comment-form {
   display: grid;
-  gap: 0.55rem;
+  gap: 0.42rem;
+}
+
+.rich-editor-wrap {
+  display: grid;
+  gap: 0.3rem;
+  min-width: 0;
+}
+
+.rich-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem;
+  align-items: center;
+}
+
+.rich-toolbar button,
+.rich-toolbar select,
+.rich-toolbar input[type="color"] {
+  min-height: 2rem;
+}
+
+.rich-toolbar button {
+  padding: 0.28rem 0.48rem;
+  font-size: 0.78rem;
+}
+
+.rich-toolbar select {
+  width: auto;
+  padding: 0.28rem 0.45rem;
+  font-size: 0.78rem;
+}
+
+.rich-toolbar input[type="color"] {
+  width: 2.25rem;
+  padding: 0.18rem;
+}
+
+.rich-editor {
+  min-height: 4.3rem;
+  max-height: 13rem;
+  overflow-y: auto;
+  padding: 0.62rem 0.7rem;
+  color: var(--text);
+  background: white;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  outline: none;
+  overflow-wrap: anywhere;
+}
+
+.compact-rich-editor .rich-editor {
+  min-height: 3.2rem;
+  max-height: 9rem;
+}
+
+.rich-editor:empty::before {
+  content: attr(data-placeholder);
+  color: var(--muted);
+  font-weight: 750;
 }
 
 .reaction-row {
@@ -618,7 +781,7 @@ textarea:-webkit-autofill {
   display: inline-flex;
   flex-direction: column-reverse;
   width: fit-content;
-  margin-top: 0.35rem;
+  margin-top: 0.18rem;
 }
 
 .reaction-picker[open] {
@@ -629,8 +792,8 @@ textarea:-webkit-autofill {
   display: inline-flex;
   align-items: center;
   gap: 0.28rem;
-  min-height: 2rem;
-  padding: 0.25rem 0.48rem;
+  min-height: 1.75rem;
+  padding: 0.18rem 0.42rem;
   color: var(--text);
   background: #f7f7f7;
   border: 1px solid var(--line);
@@ -659,8 +822,8 @@ textarea:-webkit-autofill {
   align-items: center;
   gap: 0.22rem;
   min-width: 2.2rem;
-  min-height: 2rem;
-  padding: 0.25rem 0.42rem;
+  min-height: 1.85rem;
+  padding: 0.2rem 0.42rem;
   color: var(--text);
   background: #f1f1f1;
   border: 1px solid var(--line);
@@ -1269,8 +1432,10 @@ td .muted { display: block; margin-top: 0.2rem; font-size: 0.8rem; }
   display: grid;
   align-content: start;
   gap: 0.55rem;
+  min-width: 0;
   min-height: 190px;
   max-height: 330px;
+  overflow-x: hidden;
   overflow-y: auto;
   padding: 0.75rem;
   background: #f7f7f7;
@@ -1279,6 +1444,7 @@ td .muted { display: block; margin-top: 0.2rem; font-size: 0.8rem; }
 .chat-message {
   display: grid;
   gap: 0.2rem;
+  min-width: 0;
   padding: 0.58rem 0.65rem;
   background: white;
   border: 1px solid var(--line);
@@ -1313,7 +1479,14 @@ td .muted { display: block; margin-top: 0.2rem; font-size: 0.8rem; }
 
 .chat-message p {
   margin: 0;
+}
+
+.chat-text {
+  max-width: 100%;
+  white-space: pre-wrap;
   overflow-wrap: anywhere;
+  word-break: break-word;
+  line-height: 1.35;
 }
 
 .chat-photo-thumb {

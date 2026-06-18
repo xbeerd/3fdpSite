@@ -2025,6 +2025,8 @@ function renderScores() {
   $("#bowlerLogPanel").classList.toggle("hidden", state.scoreMode !== "bowlers");
   $("#recapLogPanel").classList.toggle("hidden", state.scoreMode !== "recaps");
   $("#prizeMoneyPanel").classList.toggle("hidden", state.scoreMode !== "prize" || !canViewPrize);
+  const postLatestButton = $("#postLatestScoreRecap");
+  if (postLatestButton) postLatestButton.disabled = !latestScoreRecap();
   renderScoreLeagueFilter();
   const bowlerRecaps = filteredScoreRecapsForLeague();
   const bowlerStats = buildBowlerStatsFromRecaps(bowlerRecaps);
@@ -2194,8 +2196,39 @@ function renderScoreTeam(lines, label, options = {}) {
   `;
 }
 
+function scoreRecapBlogText(recap) {
+  const totals = recap.totals || {};
+  const matchup = `${recap.ourTeamName || "3FDP"} vs ${recap.opponentTeamName || "Opponent"}`;
+  const week = recap.week ? ` - Week ${recap.week}` : "";
+  const league = recapLeagueLabel(recap);
+  const gameSummary = (totals.ourWithHandicap || []).map((score, index) => {
+    const opponent = (totals.opponentWithHandicap || [])[index];
+    const margin = (totals.margins || [])[index];
+    const result = margin === null || margin === undefined ? "" : margin > 0 ? "Won" : margin < 0 ? "Lost" : "Tie";
+    return `Game ${index + 1}: ${score || "-"}${opponent ? ` to ${opponent}` : ""}${result ? ` (${result})` : ""}`;
+  }).join("<br>");
+  const bowlerLines = (recap.ourTeamLines || []).map((line) => {
+    const series = line.series || [line.game1, line.game2, line.game3].reduce((sum, score) => sum + (Number(score) || 0), 0);
+    return `<li>${escapeHtml(line.bowlerName)}: ${Number(line.game1) || 0}, ${Number(line.game2) || 0}, ${Number(line.game3) || 0} (${series})</li>`;
+  }).join("");
+  const seriesText = `Handicap series: ${totals.ourSeriesWithHandicap || "-"}${totals.opponentSeriesWithHandicap ? ` to ${totals.opponentSeriesWithHandicap}` : ""}${totals.seriesMargin !== null && totals.seriesMargin !== undefined ? ` (${totals.seriesMargin >= 0 ? "+" : ""}${totals.seriesMargin})` : ""}`;
+  return `
+    <p><strong>${escapeHtml(matchup)}</strong><br>${escapeHtml(formatDate(recap.date))}${escapeHtml(week)}<br>${escapeHtml(league)}</p>
+    <p>${escapeHtml(seriesText)}</p>
+    ${gameSummary ? `<p>${gameSummary}</p>` : ""}
+    ${bowlerLines ? `<p><strong>3FDP scores</strong></p><ul>${bowlerLines}</ul>` : ""}
+    ${recap.notes ? `<p><strong>Note:</strong> ${escapeHtml(recap.notes)}</p>` : ""}
+  `;
+}
+
+function latestScoreRecap() {
+  return [...state.scoreRecaps]
+    .sort((a, b) => String(b.date).localeCompare(String(a.date)) || String(b.createdAt || "").localeCompare(String(a.createdAt || "")))[0] || null;
+}
+
 function renderScoreRecap(recap) {
-  const adminControls = state.user?.role === "admin"
+  const canManageRecap = state.user?.role === "admin" || recap.canManage;
+  const recapControls = canManageRecap
     ? `
       <div class="row-actions">
         ${recap.photoDataUrl ? `<button class="small ghost" type="button" data-rescan-score-recap="${recap.id}">Rescan image</button>` : ""}
@@ -2213,7 +2246,7 @@ function renderScoreRecap(recap) {
           <h3>${escapeHtml(recap.ourTeamName || "3FDP")} vs ${escapeHtml(recap.opponentTeamName || "Opponent")}</h3>
           <p class="muted">Handicap series ${totals.ourSeriesWithHandicap}${totals.opponentSeriesWithHandicap ? ` to ${totals.opponentSeriesWithHandicap}` : ""}${totals.seriesMargin !== null ? ` (${totals.seriesMargin >= 0 ? "+" : ""}${totals.seriesMargin})` : ""}</p>
         </div>
-        ${adminControls}
+        ${recapControls}
       </div>
       ${recap.notes ? `<p class="admin-note formatted-text"><strong>Admin note:</strong> ${escapeHtml(recap.notes)}</p>` : ""}
       ${recap.photoDataUrl ? `<details class="score-photo-details"><summary>View image</summary><img class="score-photo" src="${recap.photoDataUrl}" alt="Recap photo for ${escapeHtml(formatDate(recap.date))}"></details>` : ""}
@@ -3223,6 +3256,25 @@ $("#prizePotForm").addEventListener("submit", (event) => {
 });
 
 $("#newScoreRecap").addEventListener("click", () => showScoreForm());
+
+$("#postLatestScoreRecap").addEventListener("click", async (event) => {
+  const button = event.currentTarget;
+  const recap = latestScoreRecap();
+  if (!recap) return toast("No score recap has been saved yet.");
+  button.disabled = true;
+  try {
+    const data = await api("/api/notes", { method: "POST", body: JSON.stringify({ text: scoreRecapBlogText(recap) }) });
+    state.notes = data.notes || state.notes;
+    toast("Latest recap posted to the blog.");
+    setView("home");
+    renderHome();
+    if (data.note?.id) await showBlogPost(data.note.id);
+  } catch (error) {
+    toast(error.message);
+  } finally {
+    if (button.isConnected) button.disabled = false;
+  }
+});
 
 $("#cancelScoreEdit").addEventListener("click", () => hideScoreForm());
 

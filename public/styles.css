@@ -226,6 +226,11 @@ button:hover { background: var(--accent-dark); }
   top: 76px;
   right: 1rem;
   width: min(320px, calc(100vw - 2rem));
+  max-height: calc(100dvh - 92px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+  touch-action: pan-y;
   z-index: 10;
   display: grid;
   gap: 0.45rem;
@@ -304,6 +309,12 @@ main {
   padding: 0.02rem 0.28rem;
   font-weight: 900;
   white-space: nowrap;
+}
+
+.mention-text.is-match {
+  color: #0d5f3f;
+  background: #e6f7ed;
+  border-color: rgba(13, 95, 63, 0.28);
 }
 
 .form { display: grid; gap: 0.85rem; margin-top: 0.9rem; min-width: 0; }
@@ -804,6 +815,49 @@ textarea:-webkit-autofill {
   content: attr(data-placeholder);
   color: var(--muted);
   font-weight: 750;
+}
+
+.mention-picker {
+  position: fixed;
+  z-index: 40;
+  width: min(280px, calc(100vw - 1.5rem));
+  max-height: min(260px, 45dvh);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+  padding: 0.35rem;
+  background: white;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  box-shadow: var(--shadow);
+}
+
+.mention-picker button {
+  display: grid;
+  width: 100%;
+  min-height: 2.35rem;
+  padding: 0.4rem 0.5rem;
+  color: var(--text);
+  background: transparent;
+  border: 0;
+  border-radius: 6px;
+  box-shadow: none;
+  text-align: left;
+}
+
+.mention-picker button.is-active,
+.mention-picker button:hover {
+  background: #e6f7ed;
+}
+
+.mention-picker strong {
+  font-size: 0.86rem;
+}
+
+.mention-picker span {
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-weight: 700;
 }
 
 .reaction-row {

@@ -12,6 +12,9 @@ const VAPID_PRIVATE_KEY = process.env.VAPID_PRIVATE_KEY || "";
 const VAPID_SUBJECT = process.env.VAPID_SUBJECT || "mailto:admin@3fdp.local";
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY || "";
 const OPENAI_SCORE_MODEL = process.env.OPENAI_SCORE_MODEL || "gpt-4o-mini";
+const RESEND_API_KEY = process.env.RESEND_API_KEY || "";
+const PASSWORD_RESET_FROM_EMAIL = process.env.PASSWORD_RESET_FROM_EMAIL || "3FDP Team Site <onboarding@resend.dev>";
+const PASSWORD_RESET_MINUTES = 15;
 
 if (VAPID_PUBLIC_KEY && VAPID_PRIVATE_KEY) {
   webPush.setVapidDetails(VAPID_SUBJECT, VAPID_PUBLIC_KEY, VAPID_PRIVATE_KEY);
@@ -115,6 +118,55 @@ function hashPassword(password, salt = crypto.randomBytes(16).toString("hex")) {
 function verifyPassword(password, user) {
   const candidate = hashPassword(password, user.passwordSalt).hash;
   return crypto.timingSafeEqual(Buffer.from(candidate, "hex"), Buffer.from(user.passwordHash, "hex"));
+}
+
+function passwordResetHash(code, salt) {
+  return crypto.createHash("sha256").update(`${salt}:${code}:${SESSION_SECRET}`).digest("hex");
+}
+
+function createPasswordResetCode(user) {
+  const code = String(crypto.randomInt(0, 1_000_000)).padStart(6, "0");
+  const salt = crypto.randomBytes(16).toString("hex");
+  user.passwordReset = {
+    salt,
+    hash: passwordResetHash(code, salt),
+    expiresAt: new Date(Date.now() + PASSWORD_RESET_MINUTES * 60 * 1000).toISOString(),
+    attempts: 0,
+    createdAt: new Date().toISOString()
+  };
+  return code;
+}
+
+function verifyPasswordResetCode(user, code) {
+  const reset = user?.passwordReset;
+  if (!reset?.hash || !reset?.salt || !reset?.expiresAt) return false;
+  if (new Date(reset.expiresAt).getTime() < Date.now()) return false;
+  if (Number(reset.attempts || 0) >= 5) return false;
+  const candidate = passwordResetHash(String(code || "").trim(), reset.salt);
+  return crypto.timingSafeEqual(Buffer.from(candidate, "hex"), Buffer.from(reset.hash, "hex"));
+}
+
+async function sendPasswordResetEmail(user, code) {
+  if (!RESEND_API_KEY) throw Object.assign(new Error("Password reset email is not configured yet."), { statusCode: 503 });
+  const response = await fetch("https://api.resend.com/emails", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${RESEND_API_KEY}`,
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({
+      from: PASSWORD_RESET_FROM_EMAIL,
+      to: user.email,
+      subject: "3FDP password reset code",
+      text: `Your 3FDP password reset code is ${code}. It expires in ${PASSWORD_RESET_MINUTES} minutes. If you did not request this, you can ignore this email.`,
+      html: `<p>Your 3FDP password reset code is:</p><p style="font-size:24px;font-weight:700;letter-spacing:4px">${code}</p><p>This code expires in ${PASSWORD_RESET_MINUTES} minutes. If you did not request this, you can ignore this email.</p>`
+    })
+  });
+  if (!response.ok) {
+    const body = await response.text().catch(() => "");
+    console.error("Resend password reset failed", response.status, body);
+    throw Object.assign(new Error("Password reset email could not be sent."), { statusCode: 502 });
+  }
 }
 
 function sign(payload) {
@@ -1069,18 +1121,29 @@ function userMentionKeys(user) {
   return keys;
 }
 
+function mentionTargets(text) {
+  const value = String(text || "");
+  return [...value.matchAll(/@([a-z0-9][a-z0-9._-]{0,80})/gi)]
+    .map((match) => mentionKey(match[1]))
+    .filter(Boolean);
+}
+
 function mentionedUserIds(data, text, actorUserId) {
   const value = String(text || "");
   if (!value.includes("@")) return new Set();
-  const rawMentions = [...value.matchAll(/@([a-z0-9][a-z0-9._ -]{0,60})/gi)]
-    .map((match) => mentionKey(match[1]))
-    .filter(Boolean);
+  if (/(^|[\s(>])@all\b/i.test(value)) {
+    return new Set((data.users || []).filter((user) => user.id !== actorUserId && user.approved !== false).map((user) => user.id));
+  }
+  const rawMentions = mentionTargets(value);
   if (!rawMentions.length) return new Set();
   const found = new Set();
   for (const user of data.users || []) {
     if (user.id === actorUserId) continue;
+    if (user.approved === false) continue;
     const keys = userMentionKeys(user);
-    if (rawMentions.some((mention) => keys.has(mention) || [...keys].some((key) => key.length >= 3 && mention.startsWith(key)))) {
+    if (rawMentions.some((mention) => keys.has(mention) || [...keys].some((key) => (
+      key.length >= 3 && (mention.startsWith(key) || (mention.length >= 3 && key.startsWith(mention)))
+    )))) {
       found.add(user.id);
     }
   }
@@ -1290,6 +1353,42 @@ exports.handler = async (event) => {
       return json(200, { ok: true }, { "Set-Cookie": "session=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0" });
     }
 
+    if (method === "POST" && route === "/password-reset/request") {
+      const body = parseBody(event);
+      const login = String(body.email || body.login || "").trim().toLowerCase();
+      if (!login) return json(400, { error: "Enter your email or username." });
+      const user = data.users.find((candidate) => loginMatchesUser(candidate, login));
+      if (user && user.approved !== false && user.email) {
+        const code = createPasswordResetCode(user);
+        await sendPasswordResetEmail(user, code);
+        await saveData(data);
+      }
+      return json(200, { ok: true, message: "If that account exists, a reset code has been emailed." });
+    }
+
+    if (method === "POST" && route === "/password-reset/confirm") {
+      const body = parseBody(event);
+      const login = String(body.email || body.login || "").trim().toLowerCase();
+      const code = String(body.code || "").trim();
+      const password = String(body.password || "");
+      const user = data.users.find((candidate) => loginMatchesUser(candidate, login));
+      if (password.length < 8) return json(400, { error: "Password must be at least 8 characters." });
+      if (!user || user.approved === false || !verifyPasswordResetCode(user, code)) {
+        if (user?.passwordReset) {
+          user.passwordReset.attempts = Number(user.passwordReset.attempts || 0) + 1;
+          await saveData(data);
+        }
+        return json(400, { error: "Invalid or expired reset code." });
+      }
+      const { salt, hash } = hashPassword(password);
+      user.passwordSalt = salt;
+      user.passwordHash = hash;
+      user.passwordSetupRequired = false;
+      delete user.passwordReset;
+      await saveData(data);
+      return json(200, { ok: true });
+    }
+
     if (method === "POST" && route === "/set-password") {
       const user = requireUser(event, data);
       const body = parseBody(event);
@@ -1369,6 +1468,10 @@ exports.handler = async (event) => {
         notes: sortedNotes(data),
         events: visibleCalendarEvents(data),
         regularLineup: regularBowlerNames(data),
+        mentionUsers: data.users.filter((user) => user.approved !== false).map((user) => ({
+          username: user.username,
+          recapName: user.recapName || ""
+        })),
         subRequests: visibleSubRequests(data)
       });
     }

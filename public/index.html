@@ -58,7 +58,30 @@
           <label>Password <input name="password" type="password" autocomplete="current-password"></label>
           <button type="submit">Log in</button>
         </form>
-        <button id="showRegister" class="ghost" type="button">New user</button>
+        <div class="row-actions">
+          <button id="showRegister" class="ghost" type="button">New user</button>
+          <button id="showPasswordReset" class="ghost" type="button">Forgot password?</button>
+        </div>
+        <form id="passwordResetRequestForm" class="form hidden">
+          <p class="eyebrow">Password reset</p>
+          <p class="hint">Enter your email or username and we will send a reset code to your account email.</p>
+          <label>Email or username <input name="email" type="text" autocomplete="username" required></label>
+          <div class="row-actions">
+            <button type="submit">Send reset code</button>
+            <button class="ghost" type="button" data-cancel-password-reset>Back to login</button>
+          </div>
+        </form>
+        <form id="passwordResetConfirmForm" class="form hidden">
+          <p class="eyebrow">Enter reset code</p>
+          <label>Email or username <input name="email" type="text" autocomplete="username" required></label>
+          <label>Reset code <input name="code" type="text" inputmode="numeric" autocomplete="one-time-code" maxlength="12" required></label>
+          <label>New password <input name="password" type="password" minlength="8" autocomplete="new-password" required></label>
+          <div class="row-actions">
+            <button type="submit">Reset password</button>
+            <button class="ghost" type="button" data-cancel-password-reset>Back to login</button>
+          </div>
+        </form>
+        <p id="passwordResetStatus" class="action-status hidden"></p>
         <form id="registerForm" class="form hidden">
           <p class="eyebrow">New teammate</p>
           <p class="hint">Push Notifications are recommended for important updates like sub requests, team chat, and blog replies. You can turn them on or off later in User options.</p>

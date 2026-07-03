@@ -17,6 +17,7 @@ const state = {
   adminUsers: [],
   adminSetupOpen: false,
   regularLineup: [],
+  mentionUsers: [],
   pushConfigured: false,
   pushSubscribed: false,
   pushPreferences: { subAlerts: true, blogAlerts: true, chatAlerts: true, mentionAlerts: true, calendarAlerts: true },
@@ -48,6 +49,7 @@ const state = {
 const $ = (selector) => document.querySelector(selector);
 const $$ = (selector) => [...document.querySelectorAll(selector)];
 let notificationPollId = null;
+let mentionPickerState = null;
 
 function escapeHtml(value) {
   return String(value ?? "").replace(/[&<>"']/g, (character) => ({
@@ -59,12 +61,187 @@ function escapeHtml(value) {
   }[character]));
 }
 
-function formatMentionText(value) {
-  return escapeHtml(value).replace(/(^|[\s(])(@[a-z0-9][a-z0-9._ -]{0,60})/gi, (match, prefix, mention) => {
+function mentionKey(value) {
+  return String(value || "").toLowerCase().replace(/[^a-z0-9]/g, "");
+}
+
+function userMentionKeys(user) {
+  const keys = new Set();
+  for (const name of [user.username, user.recapName]) {
+    const normalized = mentionKey(name);
+    if (normalized) keys.add(normalized);
+    const first = mentionKey(String(name || "").split(/\s+/)[0]);
+    if (first && first.length >= 2) keys.add(first);
+  }
+  return keys;
+}
+
+function mentionMatchesKnownUser(mention) {
+  const key = mentionKey(mention.replace(/^@/, ""));
+  if (key === "all") return true;
+  if (!key) return false;
+  return [...(state.mentionUsers || []), state.user].filter(Boolean).some((user) => {
+    const keys = userMentionKeys(user);
+    return keys.has(key) || [...keys].some((candidate) => (
+      candidate.length >= 3 && (key.startsWith(candidate) || (key.length >= 3 && candidate.startsWith(key)))
+    ));
+  });
+}
+
+function highlightMentions(html) {
+  return html.replace(/(^|[\s(>])(@[a-z0-9][a-z0-9._-]{0,60})/gi, (match, prefix, mention) => {
     const trimmedMention = mention.replace(/\s+$/g, "");
     const trailing = mention.slice(trimmedMention.length);
-    return `${prefix}<span class="mention-text">${trimmedMention}</span>${trailing}`;
+    const matched = mentionMatchesKnownUser(trimmedMention);
+    return `${prefix}<span class="mention-text ${matched ? "is-match" : ""}">${trimmedMention}</span>${trailing}`;
   });
+}
+
+function formatMentionText(value) {
+  return highlightMentions(escapeHtml(value));
+}
+
+function mentionDisplayName(user) {
+  const username = String(user?.username || "").trim();
+  const recapName = String(user?.recapName || "").trim();
+  return recapName || username;
+}
+
+function mentionInsertValue(user) {
+  return String(user?.value || user?.username || "").trim().replace(/\s+/g, "");
+}
+
+function mentionOptions(query = "") {
+  const key = mentionKey(query);
+  const seen = new Set();
+  const options = [{ value: "all", label: "All", hint: "Notify everyone" }];
+  for (const user of [...(state.mentionUsers || []), state.user].filter(Boolean)) {
+    const value = mentionInsertValue(user);
+    if (!value || seen.has(value.toLowerCase())) continue;
+    seen.add(value.toLowerCase());
+    const label = mentionDisplayName(user);
+    const keys = [...userMentionKeys(user), mentionKey(value), mentionKey(label)].filter(Boolean);
+    const matches = !key || keys.some((candidate) => (
+      candidate.includes(key) || key.includes(candidate) || (key.length >= 3 && candidate.startsWith(key))
+    ));
+    if (matches) options.push({ value, label, hint: value === label ? "" : `@${value}` });
+  }
+  return options.filter((option) => {
+    if (!key) return true;
+    if (option.value === "all") return "all".startsWith(key);
+    return true;
+  }).slice(0, 8);
+}
+
+function mentionPickerElement() {
+  let picker = $("#mentionPicker");
+  if (!picker) {
+    picker = document.createElement("div");
+    picker.id = "mentionPicker";
+    picker.className = "mention-picker hidden";
+    document.body.appendChild(picker);
+  }
+  return picker;
+}
+
+function hideMentionPicker() {
+  mentionPickerState = null;
+  mentionPickerElement().classList.add("hidden");
+}
+
+function positionMentionPicker(target) {
+  const picker = mentionPickerElement();
+  const rect = target.getBoundingClientRect();
+  const width = Math.min(280, window.innerWidth - 24);
+  picker.style.width = `${width}px`;
+  const left = Math.min(Math.max(12, rect.left), window.innerWidth - width - 12);
+  const below = rect.bottom + 6;
+  const estimatedHeight = Math.min(260, picker.scrollHeight || 220);
+  const top = below + estimatedHeight > window.innerHeight - 8
+    ? Math.max(8, rect.top - estimatedHeight - 6)
+    : below;
+  picker.style.left = `${left}px`;
+  picker.style.top = `${top}px`;
+}
+
+function renderMentionPicker() {
+  const picker = mentionPickerElement();
+  if (!mentionPickerState) {
+    picker.classList.add("hidden");
+    return;
+  }
+  const options = mentionOptions(mentionPickerState.query);
+  if (!options.length) {
+    hideMentionPicker();
+    return;
+  }
+  mentionPickerState.activeIndex = Math.min(mentionPickerState.activeIndex || 0, options.length - 1);
+  picker.innerHTML = options.map((option, index) => `
+    <button class="${index === mentionPickerState.activeIndex ? "is-active" : ""}" type="button" data-mention-option="${escapeHtml(option.value)}">
+      <strong>@${escapeHtml(option.value)}</strong>
+      <span>${escapeHtml(option.hint || option.label)}</span>
+    </button>
+  `).join("");
+  picker.classList.remove("hidden");
+  positionMentionPicker(mentionPickerState.target);
+}
+
+function mentionContextForTextInput(input) {
+  const cursor = input.selectionStart ?? 0;
+  const before = input.value.slice(0, cursor);
+  const match = before.match(/(^|[\s(])@([a-z0-9._-]{0,40})$/i);
+  if (!match) return null;
+  return { target: input, type: "input", query: match[2], start: cursor - match[2].length - 1, end: cursor, activeIndex: 0 };
+}
+
+function mentionContextForRichEditor(editor) {
+  const selection = window.getSelection();
+  if (!selection?.rangeCount) return null;
+  const range = selection.getRangeAt(0);
+  if (!editor.contains(range.endContainer) || !range.collapsed || range.endContainer.nodeType !== Node.TEXT_NODE) return null;
+  const text = range.endContainer.textContent.slice(0, range.endOffset);
+  const match = text.match(/(^|[\s(])@([a-z0-9._-]{0,40})$/i);
+  if (!match) return null;
+  const mentionRange = range.cloneRange();
+  mentionRange.setStart(range.endContainer, range.endOffset - match[2].length - 1);
+  return { target: editor, type: "rich", query: match[2], range: mentionRange, activeIndex: 0 };
+}
+
+function updateMentionPicker(target) {
+  const context = target.matches?.("#chatForm input[name='text']")
+    ? mentionContextForTextInput(target)
+    : target.classList?.contains("rich-editor") ? mentionContextForRichEditor(target) : null;
+  if (!context) {
+    hideMentionPicker();
+    return;
+  }
+  mentionPickerState = context;
+  renderMentionPicker();
+}
+
+function insertMention(value) {
+  if (!mentionPickerState) return;
+  const insert = `@${value} `;
+  if (mentionPickerState.type === "input") {
+    const input = mentionPickerState.target;
+    input.setRangeText(insert, mentionPickerState.start, mentionPickerState.end, "end");
+    input.focus();
+  } else if (mentionPickerState.type === "rich") {
+    const selection = window.getSelection();
+    selection.removeAllRanges();
+    selection.addRange(mentionPickerState.range);
+    mentionPickerState.range.deleteContents();
+    const node = document.createTextNode(insert);
+    mentionPickerState.range.insertNode(node);
+    const after = document.createRange();
+    after.setStartAfter(node);
+    after.collapse(true);
+    selection.removeAllRanges();
+    selection.addRange(after);
+    mentionPickerState.target.focus();
+    syncRichEditors(mentionPickerState.target.closest("form") || document);
+  }
+  hideMentionPicker();
 }
 
 function stripRichText(value) {
@@ -103,11 +280,7 @@ function sanitizeRichText(value) {
 function formatBlogText(value) {
   const raw = String(value || "");
   const html = /<[^>]+>/.test(raw) ? sanitizeRichText(raw) : escapeHtml(raw);
-  return html.replace(/(^|[\s(>])(@[a-z0-9][a-z0-9._ -]{0,60})/gi, (match, prefix, mention) => {
-    const trimmedMention = mention.replace(/\s+$/g, "");
-    const trailing = mention.slice(trimmedMention.length);
-    return `${prefix}<span class="mention-text">${trimmedMention}</span>${trailing}`;
-  });
+  return highlightMentions(html);
 }
 
 function richEditorMarkup(name, value = "", placeholder = "Write something...") {
@@ -350,7 +523,30 @@ function renderMenuUserSummary() {
 function showRegisterForm(show) {
   $("#loginForm").classList.toggle("hidden", show);
   $("#showRegister").classList.toggle("hidden", show);
+  $("#showPasswordReset").classList.toggle("hidden", show);
   $("#registerForm").classList.toggle("hidden", !show);
+  $("#passwordResetRequestForm").classList.add("hidden");
+  $("#passwordResetConfirmForm").classList.add("hidden");
+  setActionStatus("#passwordResetStatus", "");
+}
+
+function showPasswordResetForm(step = "request") {
+  $("#loginForm").classList.add("hidden");
+  $("#showRegister").classList.add("hidden");
+  $("#showPasswordReset").classList.add("hidden");
+  $("#registerForm").classList.add("hidden");
+  $("#passwordResetRequestForm").classList.toggle("hidden", step !== "request");
+  $("#passwordResetConfirmForm").classList.toggle("hidden", step !== "confirm");
+}
+
+function showLoginForm() {
+  $("#loginForm").classList.remove("hidden");
+  $("#showRegister").classList.remove("hidden");
+  $("#showPasswordReset").classList.remove("hidden");
+  $("#registerForm").classList.add("hidden");
+  $("#passwordResetRequestForm").classList.add("hidden");
+  $("#passwordResetConfirmForm").classList.add("hidden");
+  setActionStatus("#passwordResetStatus", "");
 }
 
 async function logout() {
@@ -583,6 +779,7 @@ async function refreshBootstrap() {
   state.events = data.events;
   state.subRequests = data.subRequests;
   state.regularLineup = data.regularLineup || state.regularLineup || [];
+  state.mentionUsers = data.mentionUsers || state.mentionUsers || [];
   state.adminSetupOpen = Boolean(data.adminSetupOpen);
   renderHome();
   renderCalendar();
@@ -602,6 +799,7 @@ async function refreshCalendarState(preferredEventId = "") {
   state.events = data.events;
   state.subRequests = data.subRequests;
   state.regularLineup = data.regularLineup || state.regularLineup || [];
+  state.mentionUsers = data.mentionUsers || state.mentionUsers || [];
   state.adminSetupOpen = Boolean(data.adminSetupOpen);
   if (preferredEventId && state.events.some((eventItem) => eventItem.id === preferredEventId)) {
     state.selectedCalendarEventId = preferredEventId;
@@ -707,6 +905,7 @@ async function refreshNotifications({ open = state.notificationOpen, markSeen = 
   state.subRequests = bootstrap.subRequests;
   state.notes = bootstrap.notes;
   state.regularLineup = bootstrap.regularLineup || state.regularLineup || [];
+  state.mentionUsers = bootstrap.mentionUsers || state.mentionUsers || [];
   const chatChanged = setChatMessages(chat.messages || []);
   ensureNotificationBaselines();
   state.notifications = buildNotifications();
@@ -752,6 +951,7 @@ async function refreshCurrentView() {
     state.subRequests = data.subRequests;
     state.events = data.events;
     state.regularLineup = data.regularLineup || state.regularLineup || [];
+    state.mentionUsers = data.mentionUsers || state.mentionUsers || [];
     renderHome();
     return;
   }
@@ -784,6 +984,7 @@ async function refreshCurrentView() {
     state.schedule = data.schedule;
     state.events = data.events;
     state.regularLineup = data.regularLineup || state.regularLineup || [];
+    state.mentionUsers = data.mentionUsers || state.mentionUsers || [];
     renderContestHeader();
     await refreshAdmin();
     return;
@@ -1926,6 +2127,10 @@ function recapLeagueLabel(recap) {
   return String(recap.eventName || recap.leagueName || eventItem?.leagueName || eventItem?.title || "Unassigned event").trim();
 }
 
+function isIndividualRecapEvent(recap) {
+  return /summer\s+sweeper/i.test(recapLeagueLabel(recap));
+}
+
 function filteredScoreRecapsForBowlerLog() {
   return state.selectedScoreLeague
     ? state.scoreRecaps.filter((recap) => recapLeagueLabel(recap) === state.selectedScoreLeague)
@@ -2212,6 +2417,13 @@ function scoreRecapBlogText(recap) {
     return `<li>${escapeHtml(line.bowlerName)}: ${Number(line.game1) || 0}, ${Number(line.game2) || 0}, ${Number(line.game3) || 0} (${series})</li>`;
   }).join("");
   const seriesText = `Handicap series: ${totals.ourSeriesWithHandicap || "-"}${totals.opponentSeriesWithHandicap ? ` to ${totals.opponentSeriesWithHandicap}` : ""}${totals.seriesMargin !== null && totals.seriesMargin !== undefined ? ` (${totals.seriesMargin >= 0 ? "+" : ""}${totals.seriesMargin})` : ""}`;
+  if (isIndividualRecapEvent(recap)) {
+    return `
+      <p><strong>${escapeHtml(league)}</strong><br>${escapeHtml(formatDate(recap.date))}${escapeHtml(week)}</p>
+      ${bowlerLines ? `<p><strong>Scores</strong></p><ul>${bowlerLines}</ul>` : ""}
+      ${recap.notes ? `<p><strong>Note:</strong> ${escapeHtml(recap.notes)}</p>` : ""}
+    `;
+  }
   return `
     <p><strong>${escapeHtml(matchup)}</strong><br>${escapeHtml(formatDate(recap.date))}${escapeHtml(week)}<br>${escapeHtml(league)}</p>
     <p>${escapeHtml(seriesText)}</p>
@@ -2432,6 +2644,43 @@ async function init() {
 }
 
 $("#menuBtn").addEventListener("click", () => $("#menu").classList.toggle("hidden"));
+document.addEventListener("input", (event) => {
+  const target = event.target;
+  if (target?.matches?.("#chatForm input[name='text']") || target?.classList?.contains("rich-editor")) {
+    updateMentionPicker(target);
+  }
+});
+document.addEventListener("keydown", (event) => {
+  if (!mentionPickerState) return;
+  if (!["ArrowDown", "ArrowUp", "Enter", "Tab", "Escape"].includes(event.key)) return;
+  const options = mentionOptions(mentionPickerState.query);
+  if (event.key === "Escape") {
+    hideMentionPicker();
+    return;
+  }
+  if (!options.length) return;
+  event.preventDefault();
+  if (event.key === "ArrowDown") {
+    mentionPickerState.activeIndex = ((mentionPickerState.activeIndex || 0) + 1) % options.length;
+    renderMentionPicker();
+    return;
+  }
+  if (event.key === "ArrowUp") {
+    mentionPickerState.activeIndex = ((mentionPickerState.activeIndex || 0) - 1 + options.length) % options.length;
+    renderMentionPicker();
+    return;
+  }
+  insertMention(options[mentionPickerState.activeIndex || 0].value);
+});
+document.addEventListener("click", (event) => {
+  const option = event.target.closest?.("[data-mention-option]");
+  if (option) {
+    event.preventDefault();
+    insertMention(option.dataset.mentionOption);
+    return;
+  }
+  if (!event.target.closest?.("#mentionPicker, .rich-editor, #chatForm input[name='text']")) hideMentionPicker();
+});
 $("#refreshApp").addEventListener("click", async () => {
   const button = $("#refreshApp");
   if (button.disabled) return;
@@ -2450,6 +2699,8 @@ $("#refreshApp").addEventListener("click", async () => {
 $$("[data-view]").forEach((button) => button.addEventListener("click", () => setView(button.dataset.view)));
 $("#showRegister").addEventListener("click", () => showRegisterForm(true));
 $("#showLogin").addEventListener("click", () => showRegisterForm(false));
+$("#showPasswordReset").addEventListener("click", () => showPasswordResetForm("request"));
+$$("[data-cancel-password-reset]").forEach((button) => button.addEventListener("click", () => showLoginForm()));
 $("#menuAuthBtn").addEventListener("click", async () => {
   if (state.user) await logout();
   else setView("login");
@@ -2690,6 +2941,44 @@ $("#loginForm").addEventListener("submit", async (event) => {
     toast("Logged in.");
   } catch (error) {
     toast(error.message);
+  }
+});
+
+$("#passwordResetRequestForm").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const form = event.currentTarget;
+  const submit = form.querySelector("button[type='submit']");
+  const email = String(new FormData(form).get("email") || "").trim();
+  if (submit) submit.disabled = true;
+  try {
+    const data = await api("/api/password-reset/request", { method: "POST", body: JSON.stringify({ email }) });
+    $("#passwordResetConfirmForm input[name='email']").value = email;
+    showPasswordResetForm("confirm");
+    setActionStatus("#passwordResetStatus", data.message || "If that account exists, a reset code has been emailed.");
+    toast("Check your email for the reset code.");
+  } catch (error) {
+    setActionStatus("#passwordResetStatus", error.message);
+    toast(error.message);
+  } finally {
+    if (submit?.isConnected) submit.disabled = false;
+  }
+});
+
+$("#passwordResetConfirmForm").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const form = event.currentTarget;
+  const submit = form.querySelector("button[type='submit']");
+  if (submit) submit.disabled = true;
+  try {
+    await api("/api/password-reset/confirm", { method: "POST", body: JSON.stringify(Object.fromEntries(new FormData(form))) });
+    form.reset();
+    showLoginForm();
+    toast("Password reset. You can log in now.");
+  } catch (error) {
+    setActionStatus("#passwordResetStatus", error.message);
+    toast(error.message);
+  } finally {
+    if (submit?.isConnected) submit.disabled = false;
   }
 });
 

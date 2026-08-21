@@ -2629,6 +2629,19 @@ function downloadText(filename, text, type = "text/calendar") {
   URL.revokeObjectURL(url);
 }
 
+function csvCell(value) {
+  const text = String(value ?? "");
+  return /[",\r\n]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
+}
+
+function usersToCsv(users = []) {
+  const rows = [
+    ["username", "email", "recap sheet name"],
+    ...users.map((user) => [user.username || "", user.email || "", user.recapName || ""])
+  ];
+  return rows.map((row) => row.map(csvCell).join(",")).join("\r\n");
+}
+
 async function init() {
   const me = await api("/api/me");
   state.user = me.user;
@@ -3914,6 +3927,12 @@ $("#adminEditUserForm").addEventListener("submit", async (event) => {
   } finally {
     if (submit?.isConnected) submit.disabled = false;
   }
+});
+
+$("#exportUsersCsv").addEventListener("click", () => {
+  if (!state.adminUsers.length) return toast("No users to export.");
+  downloadText("3fdp-users.csv", usersToCsv(state.adminUsers), "text/csv;charset=utf-8");
+  setActionStatus("#userAdminStatus", "User CSV exported.");
 });
 
 $("#adminUsers").addEventListener("click", async (event) => {
